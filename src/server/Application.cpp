@@ -1,0 +1,110 @@
+#include <Application.hpp>
+#include <iostream>
+#include <openssl/err.h>
+#include <vector>
+
+[[nodiscard]] std::string getLastSSLError() {
+    unsigned long errCode = ERR_get_error();
+    if (errCode == 0) return "Unknown OpenSSL error";
+
+    char errBuf[256];
+    ERR_error_string_n(errCode, errBuf, sizeof(errBuf));
+    return std::string(errBuf);
+}
+
+void Application::handleSslSession(SSL* ssl) const {
+    std::vector<char> buf(config.readBufferSize);
+    size_t nread, nwritten;
+    size_t total = 0;
+    while (SSL_read_ex(ssl, buf.data(), buf.size(), &nread) > 0) {
+        std::string message(buf.data(), nread);
+        std::cout << message << std::endl;
+
+        if (SSL_write_ex(ssl, buf.data(), nread, &nwritten) > 0 &&
+            nwritten == nread) {
+            total += nwritten;
+            continue;
+        }
+        break;
+    }
+}
+
+void Application::run() {
+    while (1) {
+        ERR_clear_error(); // Before each new connection
+        if (BIO_do_accept(acceptor.get()) <= 0) {
+            /* Client went away before we accepted the connection */
+            continue;
+        }
+
+        // Pop off acceptor chain and reset its state
+        std::unique_ptr<BIO, BioDeleter> client(BIO_pop(acceptor.get()));
+        std::cout << "New client connection" << std::endl;
+
+        /* Associate new SSL handle */
+        std::unique_ptr<SSL, SslDeleter> ssl(SSL_new(ctx.get()));
+        if (!ssl) {
+            std::cerr << "Error creating SSL handle for new connection: " << getLastSSLError() << std::endl;
+            continue;
+        }
+        BIO* raw_client = client.release();
+        SSL_set_bio(ssl.get(), raw_client, raw_client);
+
+        /* Attempt an SSL handshake with the client */
+        if (SSL_accept(ssl.get()) <= 0) {
+            std::cerr << "Error performing SSL handshake with client: " << getLastSSLError() << std::endl;
+            continue;
+        }
+
+        handleSslSession(ssl.get());
+
+        std::cout << "Client connection closed." << std::endl;
+    }
+}
+
+Application::Application(const ApplicationConfig& config) : config(config) {
+    SSL_library_init();
+    SSL_load_error_strings();
+
+    ctx.reset(SSL_CTX_new(TLS_server_method()));
+    if (!ctx) {
+        throw std::runtime_error("Failed to create SSL_CTX: " + getLastSSLError());
+    }
+
+    if (!SSL_CTX_set_min_proto_version(ctx.get(), TLS1_2_VERSION)) {
+        throw std::runtime_error("Failed to set the minimum TLS protocol version: " + getLastSSLError());
+    }
+
+    SSL_CTX_set_options(ctx.get(), SSL_OP_IGNORE_UNEXPECTED_EOF | SSL_OP_NO_RENEGOTIATION);
+
+    // Load the server's certificate *chain* file (PEM format)
+    if (SSL_CTX_use_certificate_chain_file(ctx.get(), "chain.pem") <= 0) {
+        throw std::runtime_error("Failed to load the server certificate chain file: " + getLastSSLError());
+    }
+
+    // Load corresponding private key
+    if (SSL_CTX_use_PrivateKey_file(ctx.get(), "pkey.pem", SSL_FILETYPE_PEM) <= 0) {
+        throw std::runtime_error("Error loading the server private key file, possible key/cert mismatch: " + getLastSSLError());
+    }
+
+    // Enable session caching
+    const unsigned char cache_id[] = "application"; // Can be anything
+    SSL_CTX_set_session_id_context(ctx.get(), cache_id, sizeof cache_id);
+    SSL_CTX_set_session_cache_mode(ctx.get(), SSL_SESS_CACHE_SERVER);
+    SSL_CTX_sess_set_cache_size(ctx.get(), config.cacheSize); // Set server cache size
+    SSL_CTX_set_timeout(ctx.get(), config.timeout);
+
+    // Don't require mTLS (Certificate Based Authentication)
+    SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, NULL);
+
+    // Create acceptor BIO for clients
+    acceptor.reset(BIO_new_accept(config.hostport.c_str()));
+    if (!acceptor) {
+        throw std::runtime_error("Error creating acceptor bio: " + getLastSSLError());
+    }
+
+    BIO_set_bind_mode(acceptor.get(), BIO_BIND_REUSEADDR);
+    if (BIO_do_accept(acceptor.get()) <= 0) {
+        throw std::runtime_error("Error setting up acceptor socket" + getLastSSLError());
+    }
+}
