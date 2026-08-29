@@ -3,8 +3,10 @@
 #include <string>
 
 struct ApplicationConfig {
+    std::string hostname;
     std::string hostport;
     long cacheSize;
-    long timeout;
+    long cacheTimeout;
     size_t readBufferSize;
+    std::string sharedFolderPath;
 };

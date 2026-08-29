@@ -1,35 +1,32 @@
-#include <Application.hpp>
+#include <ServerApplication.hpp>
 #include <iostream>
 #include <openssl/err.h>
 #include <vector>
+#include <Tools.hpp>
+#include <ProtocolHandler.hpp>
+#include <filesystem>
+#include <fstream>
+#include <msgpack.hpp>
 
-[[nodiscard]] std::string getLastSSLError() {
-    unsigned long errCode = ERR_get_error();
-    if (errCode == 0) return "Unknown OpenSSL error";
+namespace filesystem = std::filesystem;
 
-    char errBuf[256];
-    ERR_error_string_n(errCode, errBuf, sizeof(errBuf));
-    return std::string(errBuf);
-}
-
-void Application::handleSslSession(SSL* ssl) const {
-    std::vector<char> buf(config.readBufferSize);
-    size_t nread, nwritten;
-    size_t total = 0;
-    while (SSL_read_ex(ssl, buf.data(), buf.size(), &nread) > 0) {
-        std::string message(buf.data(), nread);
-        std::cout << message << std::endl;
-
-        if (SSL_write_ex(ssl, buf.data(), nread, &nwritten) > 0 &&
-            nwritten == nread) {
-            total += nwritten;
-            continue;
+void ServerApplication::handleSslSession(SSL* ssl) const {
+    ProtocolHeader r_header = ProtocolHandler::readHeaderBytes(ssl);
+    switch (r_header.command) {
+        case Command::UpdateList: {
+            // Send the hash table
+            msgpack::sbuffer sbuf;
+            msgpack::pack(sbuf, fileHashes);
+            ProtocolHandler::writeHeaderBytes(ssl, Command::DataStream, 0, sbuf.size());
+            ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
+            break;
         }
-        break;
+        default:
+            break;
     }
 }
 
-void Application::run() {
+void ServerApplication::run() {
     while (1) {
         ERR_clear_error(); // Before each new connection
         if (BIO_do_accept(acceptor.get()) <= 0) {
@@ -56,16 +53,19 @@ void Application::run() {
             continue;
         }
 
-        handleSslSession(ssl.get());
+        try {
+            handleSslSession(ssl.get());
+        } catch (const std::exception& e) {
+            std::cout << "Client connection closed." << std::endl;
+            std::cerr << "Error: " << e.what() << std::endl;
+            continue;
+        }
 
         std::cout << "Client connection closed." << std::endl;
     }
 }
 
-Application::Application(const ApplicationConfig& config) : config(config) {
-    SSL_library_init();
-    SSL_load_error_strings();
-
+ServerApplication::ServerApplication(const ApplicationConfig& config) : config(config) {
     ctx.reset(SSL_CTX_new(TLS_server_method()));
     if (!ctx) {
         throw std::runtime_error("Failed to create SSL_CTX: " + getLastSSLError());
@@ -92,7 +92,7 @@ Application::Application(const ApplicationConfig& config) : config(config) {
     SSL_CTX_set_session_id_context(ctx.get(), cache_id, sizeof cache_id);
     SSL_CTX_set_session_cache_mode(ctx.get(), SSL_SESS_CACHE_SERVER);
     SSL_CTX_sess_set_cache_size(ctx.get(), config.cacheSize); // Set server cache size
-    SSL_CTX_set_timeout(ctx.get(), config.timeout);
+    SSL_CTX_set_timeout(ctx.get(), config.cacheTimeout);
 
     // Don't require mTLS (Certificate Based Authentication)
     SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, NULL);
@@ -105,6 +105,23 @@ Application::Application(const ApplicationConfig& config) : config(config) {
 
     BIO_set_bind_mode(acceptor.get(), BIO_BIND_REUSEADDR);
     if (BIO_do_accept(acceptor.get()) <= 0) {
-        throw std::runtime_error("Error setting up acceptor socket" + getLastSSLError());
+        throw std::runtime_error("Error setting up acceptor socket: " + getLastSSLError());
+    }
+
+    // Generate name -> hash dictionary
+    if (filesystem::exists(config.sharedFolderPath) && filesystem::is_directory(config.sharedFolderPath)) {
+        for (const auto& entry: filesystem::directory_iterator(config.sharedFolderPath)) {
+            // Hash file contents
+            std::string fileName = entry.path().filename().string();
+            std::ifstream file(entry.path(), std::ios::binary);
+            if (!file.is_open()) {
+                throw std::runtime_error("Could not open file: " + entry.path().string());
+            }
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            fileHashes.insert({fileName, sha256(buffer.str())});
+        }
+    } else {
+        throw std::runtime_error("Directory not found: " + config.sharedFolderPath);
     }
 }

@@ -3,3 +3,4 @@ pkey.pem
 .vscode
 CMakePresets.json
 build
+.clang-format
