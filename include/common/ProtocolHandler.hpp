@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <openssl/ssl.h>
 #include <string>
+#include <optional>
 
 #define FLAG_TEST 0x20
 
@@ -21,8 +22,11 @@ struct ProtocolHeader {
  
 class ProtocolHandler {
 public:
-    static ProtocolHeader readHeaderBytes(SSL* ssl);
+    static bool readHeaderBytes(SSL *ssl, ProtocolHeader &outHeader);
     static void writeHeaderBytes(SSL* ssl, Command cmd, uint8_t flags, uint32_t fileSize);
     static void writeStreamBytes(SSL* ssl, const char *bytes, size_t size);
     static void readStreamBytes(SSL *ssl, std::string &buffer, size_t bytesToRead);
+private:
+    static bool readExact(SSL *ssl, void *destination, size_t bytesToRead);
+    static void writeExact(SSL *ssl, const void *source, size_t bytesToWrite);
 };

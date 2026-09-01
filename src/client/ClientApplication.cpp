@@ -1,9 +1,11 @@
 #include <ClientApplication.hpp>
+#include <ProtocolHandler.hpp>
 #include <Tools.hpp>
 #include <iostream>
-#include <vector>
-#include <ProtocolHandler.hpp>
+#include <map>
+#include <msgpack.hpp>
 #include <thread>
+#include <vector>
 
 ClientApplication::ClientApplication(const ApplicationConfig &config) : config(config) {
   ctx.reset(SSL_CTX_new(TLS_client_method()));
@@ -57,16 +59,46 @@ void ClientApplication::run() {
     throw std::runtime_error("Failed to connect to the server: " + getLastSSLError());
   }
 
+  // Load file hashes from file, hello.txt differs
+  fileHashes = loadHashMap("./filehashes-client");
+
   // Send request for an update
   ProtocolHandler::writeHeaderBytes(ssl.get(), Command::UpdateList, 0, 0);
 
   // Read that stream of bytes back!
-  ProtocolHeader header = ProtocolHandler::readHeaderBytes(ssl.get());
+  ProtocolHeader header;
+  ProtocolHandler::readHeaderBytes(ssl.get(), header);
   std::string buffer;
   ProtocolHandler::readStreamBytes(ssl.get(), buffer, header.fileSize);
+  std::map<std::string, std::string> serverFileHashes;
+  msgpack::object_handle result;
+  msgpack::unpack(result, buffer.data(), header.fileSize);
+  result.get().convert(serverFileHashes);
+
+  // Find mismatched file hashes
+  std::vector<std::string> mismatched = findDifferentHashes(serverFileHashes, fileHashes);
+  for (auto it : mismatched) {
+    // Send a request out and wait for a response
+    ProtocolHandler::writeHeaderBytes(ssl.get(), Command::RequestList, 0, 0);
+    ProtocolHandler::readHeaderBytes(ssl.get(), header);
+    // TODO
+  }
 
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
   // TODO: Shutdown on server OK response
   // SSL_shutdown(ssl.get());
+}
+
+using HashMap = std::map<std::string, std::string>;
+std::vector<std::string> ClientApplication::findDifferentHashes(HashMap& a, HashMap& b) {
+  std::vector<std::string> mismatched;
+
+  for (const auto& [key, val] : a) {
+    if (auto it = b.find(key); it != b.end() && it->second != val) {
+      mismatched.push_back(key);
+    }
+  }
+
+  return mismatched;
 }
