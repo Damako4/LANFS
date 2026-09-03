@@ -2,16 +2,42 @@ cmake_minimum_required(VERSION 3.10.0)
 project(LANFS VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 
+# Optional: This suppresses that CMP0167 FindBoost warning 
+# caused by the msgpack-cxx configuration in newer CMake versions.
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 OLD)
+endif()
+
 find_package(OpenSSL REQUIRED)
 find_package(msgpack-cxx CONFIG REQUIRED)
+
+find_path(LIBRSYNC_INCLUDE_DIR NAMES librsync.h)
+find_library(LIBRSYNC_LIBRARY NAMES rsync librsync)
+
+if(NOT LIBRSYNC_INCLUDE_DIR OR NOT LIBRSYNC_LIBRARY)
+    message(FATAL_ERROR "librsync not found. include=${LIBRSYNC_INCLUDE_DIR} lib=${LIBRSYNC_LIBRARY}")
+endif()
+
+message(STATUS "librsync include: ${LIBRSYNC_INCLUDE_DIR}")
+message(STATUS "librsync lib: ${LIBRSYNC_LIBRARY}")
 
 add_library(lanfs_core STATIC
     src/common/ProtocolHandler.cpp
     src/common/Tools.cpp
+    src/common/FileHandler.cpp
 )
 
-target_include_directories(lanfs_core PUBLIC include/common)
-target_link_libraries(lanfs_core PUBLIC OpenSSL::SSL OpenSSL::Crypto msgpack-cxx)
+target_include_directories(lanfs_core PUBLIC 
+    include/common 
+    ${LIBRSYNC_INCLUDE_DIR}
+)
+
+target_link_libraries(lanfs_core PUBLIC 
+    OpenSSL::SSL 
+    OpenSSL::Crypto 
+    msgpack-cxx 
+    ${LIBRSYNC_LIBRARY}
+)
 
 add_executable(lanfs_server
     src/server/main.cpp

@@ -4,3 +4,5 @@ pkey.pem
 CMakePresets.json
 build
 .clang-format
+shared-client/
+shared-server/

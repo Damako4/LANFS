@@ -9,7 +9,7 @@ int main(int, char**){
     config.cacheTimeout = 3600; // 1 hour
     config.hostport = "54458";
     config.readBufferSize = 1024;
-    config.sharedFolderPath = "./build/shared/";
+    config.sharedFolderPath = "./shared-server/";
 
     try {
         ServerApplication app(config);

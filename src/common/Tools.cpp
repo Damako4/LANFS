@@ -45,37 +45,3 @@ std::string sha256(const std::string &str) {
   }
   return ss.str();
 }
-
-void saveHashMap(const std::string &filename, std::map<std::string, std::string> &fileHashes) {
-  msgpack::sbuffer sbuf;
-  msgpack::pack(sbuf, fileHashes);
-
-  std::ofstream outFile(filename, std::ios::binary);
-  if (!outFile) {
-    throw std::runtime_error("Failed to open file for writing: " + filename);
-  }
-
-  outFile.write(sbuf.data(), sbuf.size());
-}
-
-std::map<std::string, std::string> loadHashMap(const std::string &filename) {
-  std::ifstream inFile(filename, std::ios::binary | std::ios::ate);
-  if (!inFile) {
-    throw std::runtime_error("Failed to open file for writing: " + filename);
-  }
-
-  std::streamsize size = inFile.tellg();
-  inFile.seekg(0, std::ios::beg);
-
-  std::string buffer(size, '\0');
-  if (!inFile.read(&buffer[0], size)) {
-    throw std::runtime_error("Failed to read file contents: " + filename);
-  }
-
-  msgpack::object_handle result;
-  msgpack::unpack(result, buffer.data(), buffer.size());
-  std::map<std::string, std::string> map;
-  result.get().convert(map);
-
-  return map;
-}

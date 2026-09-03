@@ -7,6 +7,8 @@
 #include <map>
 #include <ProtocolHandler.hpp>
 
+using SignatureMap = std::map<std::string, std::vector<char>>;
+
 class ServerApplication {
 public:
     ServerApplication(const ApplicationConfig& config);
@@ -14,7 +16,9 @@ public:
     void handleSslSession(SSL* ssl) const;
 private:
     ApplicationConfig config;
-    std::map<std::string, std::string> fileHashes;
+
+    SignatureMap serverSignatures;
+    SignatureMap serverDeltas;
     std::unique_ptr<BIO, BioDeleter> acceptor;
-    std::unique_ptr<SSL_CTX, SslCtxDeleter> ctx;
+    std::unique_ptr<SSL_CTX, SslCtxDeleter> ctx;    
 };

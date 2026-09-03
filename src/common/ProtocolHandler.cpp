@@ -1,6 +1,6 @@
 #include <ProtocolHandler.hpp>
-#include <iostream>
 #include <cstring>
+#include <iostream>
 
 bool ProtocolHandler::readExact(SSL *ssl, void *destination, size_t bytesToRead) {
   uint8_t *ptr = static_cast<uint8_t *>(destination);
@@ -39,22 +39,21 @@ bool ProtocolHandler::readHeaderBytes(SSL *ssl, ProtocolHeader &outHeader) {
   uint8_t raw[5];
 
   if (!readExact(ssl, raw, sizeof(raw))) {
-    return false; 
+    return false;
   }
 
-  outHeader.command  = static_cast<Command>(raw[0] & 0x03);
-  outHeader.flags    = (raw[0] >> 2) & 0x3F;
-  std::memcpy(&outHeader.fileSize, &raw[1], sizeof(outHeader.fileSize));
-  
+  outHeader.command = static_cast<Command>(raw[0] & 0x03);
+  outHeader.flags = (raw[0] >> 2) & 0x3F;
+  std::memcpy(&outHeader.streamLength, &raw[1], sizeof(outHeader.streamLength));
+
   return true;
 }
 
-void ProtocolHandler::writeHeaderBytes(SSL *ssl, Command command, uint8_t flags,
-                                       uint32_t fileSize) {
+void ProtocolHandler::writeHeaderBytes(SSL *ssl, Command command, uint8_t flags, uint32_t streamLength) {
   uint8_t raw[5];
-  
+
   raw[0] = (flags << 2) | (static_cast<uint8_t>(command) & 0x03);
-  std::memcpy(&raw[1], &fileSize, sizeof(fileSize));
+  std::memcpy(&raw[1], &streamLength, sizeof(streamLength));
 
   writeExact(ssl, raw, sizeof(raw));
 }

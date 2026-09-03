@@ -1,9 +1,11 @@
+#include <FileHandler.hpp>
 #include <ProtocolHandler.hpp>
 #include <ServerApplication.hpp>
 #include <Tools.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <librsync.h>
 #include <msgpack.hpp>
 #include <openssl/err.h>
 #include <vector>
@@ -14,12 +16,24 @@ void ServerApplication::handleSslSession(SSL *ssl) const {
   ProtocolHeader header;
   while (ProtocolHandler::readHeaderBytes(ssl, header)) {
     switch (header.command) {
-    case Command::UpdateList: {
-      // Send the hash table
-      msgpack::sbuffer sbuf;
-      msgpack::pack(sbuf, fileHashes);
-      ProtocolHandler::writeHeaderBytes(ssl, Command::DataStream, 0, sbuf.size());
-      ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
+    case Command::Signature: {
+      // Read signatures, unpack and calculate deltas
+      std::string buffer('\0', header.streamLength);
+      ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
+
+      SignatureMap clientSignatures;
+      msgpack::object_handle result;
+      msgpack::unpack(result, buffer.data(), header.streamLength);
+      result.get().convert(clientSignatures);
+
+      // Iterate over signatures and create delta file between server versions
+      break;
+    }
+    case Command::Delta: {
+      std::string buffer("\0", header.streamLength);
+      ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
+
+      // Send the requested file over
       break;
     }
     default:
@@ -110,23 +124,5 @@ ServerApplication::ServerApplication(const ApplicationConfig &config) : config(c
     throw std::runtime_error("Error setting up acceptor socket: " + getLastSSLError());
   }
 
-  // Generate name -> hash dictionary
-  if (filesystem::exists(config.sharedFolderPath) && filesystem::is_directory(config.sharedFolderPath)) {
-    for (const auto &entry : filesystem::directory_iterator(config.sharedFolderPath)) {
-      // Hash file contents
-      std::string fileName = entry.path().filename().string();
-      std::ifstream file(entry.path(), std::ios::binary);
-      if (!file.is_open()) {
-        throw std::runtime_error("Could not open file: " + entry.path().string());
-      }
-      std::stringstream buffer;
-      buffer << file.rdbuf();
-      fileHashes.insert({fileName, sha256(buffer.str())});
-    }
-  } else {
-    throw std::runtime_error("Directory not found: " + config.sharedFolderPath);
-  }
-
-  // Save file hashes to file
-  saveHashMap("./filehashes", fileHashes);
+  serverSignatures = FileHandler::generateSignatures(config.sharedFolderPath);
 }

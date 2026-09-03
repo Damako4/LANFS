@@ -7,7 +7,7 @@
 #include <map>
 #include <vector>
 
-using HashMap = std::map<std::string, std::string>;
+using SignatureMap = std::map<std::string, std::vector<char>>;
 
 class ClientApplication {
 public:
@@ -15,7 +15,6 @@ public:
     void run();
 private:
     ApplicationConfig config;
-    std::map<std::string, std::string> fileHashes;
+    SignatureMap signatures;
     std::unique_ptr<SSL_CTX, SslCtxDeleter> ctx;
-    std::vector<std::string> findDifferentHashes(HashMap& a, HashMap& b);
 };

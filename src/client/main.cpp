@@ -6,6 +6,7 @@ int main(int, char**){
     config.hostname = "127.0.0.1";
     config.hostport = "54458";
     config.readBufferSize = 1024;
+    config.sharedFolderPath = "./shared-client/";
 
     try {
         ClientApplication app(config);

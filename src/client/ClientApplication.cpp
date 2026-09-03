@@ -6,6 +6,7 @@
 #include <msgpack.hpp>
 #include <thread>
 #include <vector>
+#include <FileHandler.hpp>
 
 ClientApplication::ClientApplication(const ApplicationConfig &config) : config(config) {
   ctx.reset(SSL_CTX_new(TLS_client_method()));
@@ -59,46 +60,25 @@ void ClientApplication::run() {
     throw std::runtime_error("Failed to connect to the server: " + getLastSSLError());
   }
 
-  // Load file hashes from file, hello.txt differs
-  fileHashes = loadHashMap("./filehashes-client");
+  // Generate signatures, pack and send
+  signatures = FileHandler::generateSignatures(config.sharedFolderPath);
+  msgpack::sbuffer sbuf;
+  msgpack::pack(sbuf, signatures);
+  ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Signature, 0, sbuf.size());
+  ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
 
-  // Send request for an update
-  ProtocolHandler::writeHeaderBytes(ssl.get(), Command::UpdateList, 0, 0);
-
-  // Read that stream of bytes back!
+  // Read deltas back
   ProtocolHeader header;
   ProtocolHandler::readHeaderBytes(ssl.get(), header);
   std::string buffer;
-  ProtocolHandler::readStreamBytes(ssl.get(), buffer, header.fileSize);
-  std::map<std::string, std::string> serverFileHashes;
+  ProtocolHandler::readStreamBytes(ssl.get(), buffer, header.streamLength);
+  SignatureMap serverDeltas;
   msgpack::object_handle result;
-  msgpack::unpack(result, buffer.data(), header.fileSize);
-  result.get().convert(serverFileHashes);
-
-  // Find mismatched file hashes
-  std::vector<std::string> mismatched = findDifferentHashes(serverFileHashes, fileHashes);
-  for (auto it : mismatched) {
-    // Send a request out and wait for a response
-    ProtocolHandler::writeHeaderBytes(ssl.get(), Command::RequestList, 0, 0);
-    ProtocolHandler::readHeaderBytes(ssl.get(), header);
-    // TODO
-  }
-
+  msgpack::unpack(result, buffer.data(), header.streamLength);
+  result.get().convert(serverDeltas);
+  
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
   // TODO: Shutdown on server OK response
   // SSL_shutdown(ssl.get());
-}
-
-using HashMap = std::map<std::string, std::string>;
-std::vector<std::string> ClientApplication::findDifferentHashes(HashMap& a, HashMap& b) {
-  std::vector<std::string> mismatched;
-
-  for (const auto& [key, val] : a) {
-    if (auto it = b.find(key); it != b.end() && it->second != val) {
-      mismatched.push_back(key);
-    }
-  }
-
-  return mismatched;
 }
