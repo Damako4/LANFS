@@ -15,25 +15,22 @@ namespace filesystem = std::filesystem;
 void ServerApplication::handleSslSession(SSL *ssl) const {
   ProtocolHeader header;
   while (ProtocolHandler::readHeaderBytes(ssl, header)) {
+    // Read stream bytes
+    std::string buffer('\0', header.streamLength);
+    ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
     switch (header.command) {
     case Command::Signature: {
-      // Read signatures, unpack and calculate deltas
-      std::string buffer('\0', header.streamLength);
-      ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
-
       SignatureMap clientSignatures;
       msgpack::object_handle result;
       msgpack::unpack(result, buffer.data(), header.streamLength);
       result.get().convert(clientSignatures);
 
-      // Iterate over signatures and create delta file between server versions
-      break;
-    }
-    case Command::Delta: {
-      std::string buffer("\0", header.streamLength);
-      ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
-
-      // Send the requested file over
+      // Generate file deltas and send over
+      SignatureMap deltas = FileHandler::generateDeltas(serverSignatures, clientSignatures, config.sharedFolderPath);
+      msgpack::sbuffer sbuf;
+      msgpack::pack(sbuf, deltas);
+      ProtocolHandler::writeHeaderBytes(ssl, Command::Delta, 0, sbuf.size());
+      ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
       break;
     }
     default:

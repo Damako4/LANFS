@@ -137,7 +137,7 @@ FileDeltaPair FileHandler::threadComputeDelta(const std::vector<char> &signature
   return {fileName, std::move(deltaBuffer)};
 }
 
-SignatureMap FileHandler::generateDeltas(const SignatureMap &serverSignatures, const SignatureMap &clientSignatures, const std::string sharedFolderPath) {
+SignatureMap FileHandler::generateDeltas(const SignatureMap &serverSignatures, const SignatureMap &clientSignatures, const std::string &sharedFolderPath) {
   SignatureMap deltas;
   ThreadPool pool(CPU_CORES);
 
