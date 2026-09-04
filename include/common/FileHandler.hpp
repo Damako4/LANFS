@@ -20,6 +20,7 @@ using FileDeltaPair = std::pair<std::string, std::vector<char>>;
 class FileHandler {
 public:
     static SignatureMap generateSignatures(const std::string &sharedFolderPath);
+    static std::vector<char> generateSignature(const std::string &fileName);
     static SignatureMap generateDeltas(const SignatureMap &serverSignatures, const SignatureMap &clientSignatures, const std::string &sharedFolderPath);
 private:
     static SignaturePtr loadSignatureFromBuffer(const std::vector<char> &buffer);

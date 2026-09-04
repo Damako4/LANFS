@@ -21,6 +21,16 @@ endif()
 message(STATUS "librsync include: ${LIBRSYNC_INCLUDE_DIR}")
 message(STATUS "librsync lib: ${LIBRSYNC_LIBRARY}")
 
+find_path(EFSW_INCLUDE_DIR NAMES efsw/efsw.hpp)
+find_library(EFSW_LIBRARY NAMES efsw-debug)
+
+if(NOT EFSW_INCLUDE_DIR OR NOT EFSW_LIBRARY)
+message(FATAL_ERROR "efsw not found. include=${EFSW_INCLUDE_DIR} lib=${EFSW_LIBRARY}")
+endif()
+
+message(STATUS "efsw include: ${EFSW_INCLUDE_DIR}")
+message(STATUS "efsw lib: ${EFSW_LIBRARY}")
+
 add_library(lanfs_core STATIC
     src/common/ProtocolHandler.cpp
     src/common/Tools.cpp
@@ -50,7 +60,8 @@ target_link_libraries(lanfs_server PRIVATE lanfs_core)
 add_executable(lanfs_client
     src/client/main.cpp
     src/client/ClientApplication.cpp
+    src/client/UpdateListener.cpp
 )
 
-target_include_directories(lanfs_client PRIVATE include/client)
-target_link_libraries(lanfs_client PRIVATE lanfs_core)
+target_include_directories(lanfs_client PRIVATE include/client ${EFSW_INCLUDE_DIR})
+target_link_libraries(lanfs_client PRIVATE lanfs_core ${EFSW_LIBRARY})

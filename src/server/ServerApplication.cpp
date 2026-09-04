@@ -121,5 +121,6 @@ ServerApplication::ServerApplication(const ApplicationConfig &config) : config(c
     throw std::runtime_error("Error setting up acceptor socket: " + getLastSSLError());
   }
 
+  // TODO: Don't generate signatures for all the files at once, only as needed
   serverSignatures = FileHandler::generateSignatures(config.sharedFolderPath);
 }

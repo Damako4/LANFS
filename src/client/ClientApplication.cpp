@@ -8,6 +8,7 @@
 #include <msgpack.hpp>
 #include <thread>
 #include <vector>
+#include <UpdateListener.hpp>
 
 namespace filesystem = std::filesystem;
 
@@ -48,7 +49,7 @@ void ClientApplication::run() {
   std::cout << "Connected!" << std::endl;
 
   // We want to reach out to server everytime that we start up to get latest file updates
-  std::unique_ptr<SSL, SslDeleter> ssl(SSL_new(ctx.get()));
+  ssl.reset(SSL_new(ctx.get()));
   if (!ssl) {
     throw std::runtime_error("Failed to create the SSL object: " + getLastSSLError());
   }
@@ -62,6 +63,12 @@ void ClientApplication::run() {
     }
     throw std::runtime_error("Failed to connect to the server: " + getLastSSLError());
   }
+
+  // Setup file watcher
+  fileWatcher.reset(new efsw::FileWatcher());
+  // TODO: Add a specific watch for windows, this will only work for linux
+  watchID = fileWatcher->addWatch(config.sharedFolderPath, &listener, RECURSIVE_FILE_WATCH);
+  fileWatcher->watch();
 
   // Generate signatures, pack and send
   signatures = FileHandler::generateSignatures(config.sharedFolderPath);
@@ -83,7 +90,7 @@ void ClientApplication::run() {
   // Apply patch
   patchFiles(serverDeltas);
 
-  SSL_shutdown(ssl.get());
+  shutdown();
 }
 
 void ClientApplication::patchFiles(SignatureMap &serverDeltas) {
@@ -144,4 +151,22 @@ void ClientApplication::patchFiles(SignatureMap &serverDeltas) {
     tmpFile.reset();
     filesystem::rename(tmpFilePath, filePath);
   }
+}
+
+void ClientApplication::shutdown() {
+  if (!running) return;
+  running = false;
+
+  if (fileWatcher && watchID > 0) {
+    fileWatcher->removeWatch(watchID);
+  }
+  fileWatcher.reset();
+
+  if (ssl) {
+    SSL_shutdown(ssl.get());
+  }
+}
+
+ClientApplication::~ClientApplication() {
+  shutdown();
 }

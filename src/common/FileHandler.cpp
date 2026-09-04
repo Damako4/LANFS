@@ -7,24 +7,9 @@
 
 namespace filesystem = std::filesystem;
 
-// Generate map of file name -> librsync signatures for a given directory path
-SignatureMap FileHandler::generateSignatures(const std::string &sharedFolderPath) {
-  std::map<std::string, std::vector<char>> signatures;
-  std::vector<std::string> fileNames;
-  std::cout << sharedFolderPath << std::endl;
-
-  if (filesystem::exists(sharedFolderPath) && filesystem::is_directory(sharedFolderPath)) {
-    for (const auto &entry : filesystem::directory_iterator(sharedFolderPath)) {
-      std::string fileName = entry.path().filename().string();
-      fileNames.push_back(fileName);
-    }
-  } else {
-    throw std::runtime_error("Directory not found: " + sharedFolderPath);
-  }
-
-  for (auto &fileName : fileNames) {
-    std::string fullPath = sharedFolderPath + fileName;
-    FilePtr file(std::fopen(fullPath.data(), "rb"));
+// Generate a signature for a given file
+std::vector<char> FileHandler::generateSignature(const std::string &filePath) {
+    FilePtr file(std::fopen(filePath.data(), "rb"));
     if (!file) {
       std::perror("File opening failed");
       throw std::runtime_error("Failed to open file.");
@@ -65,6 +50,28 @@ SignatureMap FileHandler::generateSignatures(const std::string &sharedFolderPath
       throw std::runtime_error("Failed to read all signature file bytes.");
     }
 
+    return buffer;
+}
+
+// Generate map of file name -> librsync signatures for a given directory path
+SignatureMap FileHandler::generateSignatures(const std::string &sharedFolderPath) {
+  std::map<std::string, std::vector<char>> signatures;
+  std::vector<std::string> fileNames;
+  std::cout << sharedFolderPath << std::endl;
+
+  if (filesystem::exists(sharedFolderPath) && filesystem::is_directory(sharedFolderPath)) {
+    for (const auto &entry : filesystem::directory_iterator(sharedFolderPath)) {
+      std::string fileName = entry.path().filename().string();
+      
+      fileNames.push_back(fileName);
+    }
+  } else {
+    throw std::runtime_error("Directory not found: " + sharedFolderPath);
+  }
+
+  for (auto &fileName : fileNames) {
+    std::string filePath = sharedFolderPath + fileName;
+    std::vector<char> buffer = generateSignature(filePath);
     signatures.insert({fileName, buffer});
   }
 

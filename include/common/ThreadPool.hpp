@@ -6,6 +6,8 @@
 #include <vector>
 #include <future>
 
+#pragma once
+
 #define CPU_CORES 4
 
 class ThreadPool {
