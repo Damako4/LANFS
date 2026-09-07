@@ -18,11 +18,11 @@ void ServerApplication::handleSslSession(SSL *ssl) const {
     // Read stream bytes
     std::string buffer('\0', header.streamLength);
     ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
+    msgpack::object_handle result;
+    msgpack::unpack(result, buffer.data(), header.streamLength);
     switch (header.command) {
     case Command::Signature: {
       SignatureMap clientSignatures;
-      msgpack::object_handle result;
-      msgpack::unpack(result, buffer.data(), header.streamLength);
       result.get().convert(clientSignatures);
 
       // Generate file deltas and send over
@@ -30,6 +30,28 @@ void ServerApplication::handleSslSession(SSL *ssl) const {
       msgpack::sbuffer sbuf;
       msgpack::pack(sbuf, deltas);
       ProtocolHandler::writeHeaderBytes(ssl, Command::Delta, 0, sbuf.size());
+      ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
+      break;
+    }
+    case Command::Update: {
+      // File name to update is stored in buffer
+      std::string fileName;
+      result.get().convert(fileName);
+      std::vector<char> signature;
+
+      // Get signature for that filename
+      if (auto search = serverSignatures.find(fileName); search != serverSignatures.end()) {
+        signature = search->second;
+      } else {
+        // TODO: Handle this error
+        throw std::runtime_error("Failed to find client file name key in server map.");
+      }
+
+      // Send signature and then wait for a delta
+      msgpack::sbuffer sbuf;
+      auto fileNameSignature = std::make_pair(fileName, signature);
+      msgpack:pack(sbuf, fileNameSignature);
+      ProtocolHandler::writeHeaderBytes(ssl, Command::Signature, 0, sbuf.size());
       ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
       break;
     }
@@ -121,6 +143,5 @@ ServerApplication::ServerApplication(const ApplicationConfig &config) : config(c
     throw std::runtime_error("Error setting up acceptor socket: " + getLastSSLError());
   }
 
-  // TODO: Don't generate signatures for all the files at once, only as needed
   serverSignatures = FileHandler::generateSignatures(config.sharedFolderPath);
 }

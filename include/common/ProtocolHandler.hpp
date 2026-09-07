@@ -11,7 +11,7 @@
 enum class Command : uint8_t {
     Signature = 0, // Sending signatures
     Delta = 1, // Sending deltas
-    DataStream = 2, // Server sending data
+    Update = 2, // Client updating file
     NotImplemented = 3 // Not implemented
 };
 

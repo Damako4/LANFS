@@ -2,17 +2,18 @@
 #include <FileHandler.hpp>
 #include <ProtocolHandler.hpp>
 #include <Tools.hpp>
+#include <UpdateListener.hpp>
 #include <filesystem>
 #include <iostream>
 #include <map>
 #include <msgpack.hpp>
+#include <poll.h>
 #include <thread>
 #include <vector>
-#include <UpdateListener.hpp>
 
 namespace filesystem = std::filesystem;
 
-ClientApplication::ClientApplication(const ApplicationConfig &config) : config(config) {
+ClientApplication::ClientApplication(const ApplicationConfig &config) : config(config), listener(queue) {
   ctx.reset(SSL_CTX_new(TLS_client_method()));
   if (!ctx) {
     throw std::runtime_error("Failed to create SSL_CTX: " + getLastSSLError());
@@ -64,31 +65,65 @@ void ClientApplication::run() {
     throw std::runtime_error("Failed to connect to the server: " + getLastSSLError());
   }
 
+  // That initial packet (WE NEED TO SEND THIS)
+  SignatureMap localSignatures = FileHandler::generateSignatures(config.sharedFolderPath);
+  msgpack::sbuffer sbuf;
+  msgpack::pack(sbuf, localSignatures);
+  ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Signature, /*flags=*/0, sbuf.size());
+  ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
+
   // Setup file watcher
   fileWatcher.reset(new efsw::FileWatcher());
   // TODO: Add a specific watch for windows, this will only work for linux
   watchID = fileWatcher->addWatch(config.sharedFolderPath, &listener, RECURSIVE_FILE_WATCH);
+  if (watchID < 0) {
+    std::cerr << "addWatch failed with code: " << watchID << std::endl;
+  }
   fileWatcher->watch();
 
-  // Generate signatures, pack and send
-  signatures = FileHandler::generateSignatures(config.sharedFolderPath);
-  msgpack::sbuffer sbuf;
-  msgpack::pack(sbuf, signatures);
-  ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Signature, 0, sbuf.size());
-  ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
-
-  // Read deltas back
   ProtocolHeader header;
-  ProtocolHandler::readHeaderBytes(ssl.get(), header);
-  std::string buffer;
-  ProtocolHandler::readStreamBytes(ssl.get(), buffer, header.streamLength);
-  SignatureMap serverDeltas;
-  msgpack::object_handle result;
-  msgpack::unpack(result, buffer.data(), header.streamLength);
-  result.get().convert(serverDeltas);
+  int fd = SSL_get_fd(ssl.get());
+  while (true) {
+    if (auto event = queue.pop()) {
+      std::cout << event.value().fileName << std::endl;
+    }
 
-  // Apply patch
-  patchFiles(serverDeltas);
+    pollfd pfd{fd, POLLIN, 0};
+    int ret = poll(&pfd, 1, /*timeout ms=*/100);
+
+    if (ret < 0) {
+      if (errno == EINTR)
+        continue; // interrupted by a signal, just retry
+      throw std::runtime_error(std::string("poll failed: ") + std::strerror(errno));
+    }
+    if (ret == 0) {
+      continue; // timed out, nothing to read — loop back to check the queue
+    }
+    if (pfd.revents & (POLLERR | POLLHUP)) {
+      break; // connection dropped
+    }
+
+    if (pfd.revents & POLLIN) {
+      ProtocolHandler::readHeaderBytes(ssl.get(), header);
+      // Read stream bytes
+      std::string buffer(header.streamLength, '\0');
+      ProtocolHandler::readStreamBytes(ssl.get(), buffer, header.streamLength);
+      msgpack::object_handle result;
+      msgpack::unpack(result, buffer.data(), header.streamLength);
+      switch (header.command) {
+      case Command::Signature: {
+
+        break;
+      }
+      case Command::Update: {
+
+        break;
+      }
+      default:
+        break;
+      }
+    }
+  }
 
   shutdown();
 }
@@ -154,7 +189,8 @@ void ClientApplication::patchFiles(SignatureMap &serverDeltas) {
 }
 
 void ClientApplication::shutdown() {
-  if (!running) return;
+  if (!running)
+    return;
   running = false;
 
   if (fileWatcher && watchID > 0) {

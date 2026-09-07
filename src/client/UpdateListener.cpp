@@ -10,6 +10,7 @@ void UpdateListener::handleFileAction(efsw::WatchID watchid, const std::string &
   if (fs::path(oldFilename).extension() == ".tmp" || fs::path(filename).extension() == ".tmp") {
     return;
   }
+  FileEvent event;
   switch (action) {
   case efsw::Actions::Add:
     std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Added" << std::endl;
@@ -19,9 +20,8 @@ void UpdateListener::handleFileAction(efsw::WatchID watchid, const std::string &
     break;
   case efsw::Actions::Modified:
     // Send message to server that file was modified
-    
-
-    std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Modified" << std::endl;
+    event.fileName = filename;
+    queue.push(event);
     break;
   case efsw::Actions::Moved:
     std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Moved from (" << oldFilename << ")" << std::endl;

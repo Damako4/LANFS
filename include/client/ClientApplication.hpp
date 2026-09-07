@@ -8,6 +8,7 @@
 #include <vector>
 #include <efsw/efsw.hpp>
 #include <UpdateListener.hpp>
+#include <FileEventQueue.hpp>
 
 #define CHUNK_SIZE 65536
 #define RECURSIVE_FILE_WATCH 0
@@ -28,6 +29,7 @@ private:
   std::unique_ptr<SSL, SslDeleter> ssl;
   void patchFiles(SignatureMap &serverDeltas);
 
+  FileEventQueue queue;
   UpdateListener listener;
   std::unique_ptr<efsw::FileWatcher> fileWatcher;
   efsw::WatchID watchID = -1;

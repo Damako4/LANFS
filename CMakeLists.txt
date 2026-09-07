@@ -61,6 +61,7 @@ add_executable(lanfs_client
     src/client/main.cpp
     src/client/ClientApplication.cpp
     src/client/UpdateListener.cpp
+    src/client/FileEventQueue.cpp
 )
 
 target_include_directories(lanfs_client PRIVATE include/client ${EFSW_INCLUDE_DIR})
