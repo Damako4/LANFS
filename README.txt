@@ -1,1 +1,0 @@
-LAN File Storage Protocol

@@ -6,3 +6,4 @@ build
 .clang-format
 shared-client/
 shared-server/
+application.pu
