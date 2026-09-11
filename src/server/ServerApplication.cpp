@@ -16,7 +16,7 @@ void ServerApplication::handleSslSession(SSL *ssl) const {
   ProtocolHeader header;
   while (ProtocolHandler::readHeaderBytes(ssl, header)) {
     // Read stream bytes
-    std::string buffer('\0', header.streamLength);
+    std::string buffer(header.streamLength, '\0');
     ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
     msgpack::object_handle result;
     msgpack::unpack(result, buffer.data(), header.streamLength);
@@ -50,9 +50,17 @@ void ServerApplication::handleSslSession(SSL *ssl) const {
       // Send signature and then wait for a delta
       msgpack::sbuffer sbuf;
       auto fileNameSignature = std::make_pair(fileName, signature);
-      msgpack:pack(sbuf, fileNameSignature);
+      msgpack::pack(sbuf, fileNameSignature);
       ProtocolHandler::writeHeaderBytes(ssl, Command::Signature, 0, sbuf.size());
       ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
+      break;
+    }
+    case Command::Delta: {
+      // Apply delta
+      FileDeltaPair fileDeltaPair;
+      result.get().convert(fileDeltaPair);
+      FileHandler::patchFile(fileDeltaPair, config.sharedFolderPath);
+      std::cout << "Updating File!" << std::endl;
       break;
     }
     default:

@@ -2,6 +2,9 @@
 
 #include <efsw/efsw.hpp>
 #include <FileEventQueue.hpp>
+#include <mutex>
+#include <unordered_map>
+#include <chrono>
 
 class UpdateListener : public efsw::FileWatchListener {
 public:
@@ -11,4 +14,7 @@ public:
                         const std::string &oldFilename) override;
 private:
     FileEventQueue &queue;
+    std::mutex debounceMutex;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> lastEventTime;
+    static constexpr auto debounceWindow = std::chrono::milliseconds(300);
 };

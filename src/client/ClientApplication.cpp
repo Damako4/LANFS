@@ -66,9 +66,9 @@ void ClientApplication::run() {
   }
 
   // That initial packet (WE NEED TO SEND THIS)
-  SignatureMap localSignatures = FileHandler::generateSignatures(config.sharedFolderPath);
+  signatures = FileHandler::generateSignatures(config.sharedFolderPath);
   msgpack::sbuffer sbuf;
-  msgpack::pack(sbuf, localSignatures);
+  msgpack::pack(sbuf, signatures);
   ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Signature, /*flags=*/0, sbuf.size());
   ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
 
@@ -83,9 +83,36 @@ void ClientApplication::run() {
 
   ProtocolHeader header;
   int fd = SSL_get_fd(ssl.get());
+  msgpack::object_handle result;
   while (true) {
     if (auto event = queue.pop()) {
-      std::cout << event.value().fileName << std::endl;
+      msgpack::sbuffer sbuf;
+      std::string fileName = event.value().fileName;
+      msgpack::pack(sbuf, fileName);
+      // Send server update command
+      ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Update, 0, sbuf.size());
+      ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
+
+      // Receive deltas
+      ProtocolHandler::readHeaderBytes(ssl.get(), header);
+      std::string buffer(header.streamLength, '\0');
+      ProtocolHandler::readStreamBytes(ssl.get(), buffer, header.streamLength);
+      msgpack::unpack(result, buffer.data(), header.streamLength);
+      FileDeltaPair serverFileSig;
+      result.get().convert(serverFileSig);
+
+      // Generate my signature for that file, and update in local storage
+      auto clientFileSig = FileHandler::generateSignature(config.sharedFolderPath, fileName);
+      signatures.at(fileName) = clientFileSig.second;
+
+      // Calculate deltas
+      FileDeltaPair fileDeltaPair = FileHandler::generateDelta(clientFileSig, serverFileSig, config.sharedFolderPath);
+      
+      // Send patch
+      sbuf.clear();
+      msgpack::pack(sbuf, fileDeltaPair);
+      ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Delta, 0, sbuf.size());
+      ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
     }
 
     pollfd pfd{fd, POLLIN, 0};
@@ -126,66 +153,6 @@ void ClientApplication::run() {
   }
 
   shutdown();
-}
-
-void ClientApplication::patchFiles(SignatureMap &serverDeltas) {
-  for (auto &[fileName, delta] : serverDeltas) {
-    filesystem::path filePath = config.sharedFolderPath + fileName;
-    filesystem::path tmpFilePath = filePath;
-    tmpFilePath += ".tmp";
-    FilePtr file(std::fopen(filePath.c_str(), "rb"));
-    FilePtr tmpFile(std::fopen(tmpFilePath.c_str(), "wb"));
-    if (!file || !tmpFile) {
-      std::perror("File opening failed");
-      throw std::runtime_error("Failed to open file.");
-    }
-    rs_job_t *job = rs_patch_begin(rs_file_copy_cb, file.get());
-
-    unsigned char out_chunk[CHUNK_SIZE];
-    rs_buffers_t buf = {0};
-    buf.next_in = delta.data();
-    buf.avail_in = delta.size();
-    buf.eof_in = 1;
-
-    rs_result result;
-    do {
-      buf.next_out = (char *)out_chunk;
-      buf.avail_out = sizeof(out_chunk);
-
-      result = rs_job_iter(job, &buf);
-
-      size_t written = sizeof(out_chunk) - buf.avail_out;
-      if (written > 0) {
-        size_t n = std::fwrite(out_chunk, 1, written, tmpFile.get());
-        if (n != written) {
-          if (std::ferror(tmpFile.get())) {
-            tmpFile.reset();
-            filesystem::remove(tmpFilePath);
-            throw std::runtime_error(std::string("Write failed: ") + std::strerror(errno));
-          } else {
-            tmpFile.reset();
-            filesystem::remove(tmpFilePath);
-            throw std::runtime_error("Write failed: short write.");
-          }
-        }
-      }
-
-    } while (result == RS_BLOCKED || (result == RS_DONE && buf.avail_in > 0));
-
-    if (result != RS_DONE) {
-      rs_job_free(job);
-      tmpFile.reset();
-      filesystem::remove(tmpFilePath);
-      throw std::runtime_error(std::string("Failed to patch: ") + rs_strerror(result));
-    }
-
-    rs_job_free(job);
-
-    // Move tmpFile to original file
-    file.reset();
-    tmpFile.reset();
-    filesystem::rename(tmpFilePath, filePath);
-  }
 }
 
 void ClientApplication::shutdown() {

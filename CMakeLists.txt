@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.10.0)
 project(LANFS VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+endif()
+
 # Optional: This suppresses that CMP0167 FindBoost warning 
 # caused by the msgpack-cxx configuration in newer CMake versions.
 if(POLICY CMP0167)

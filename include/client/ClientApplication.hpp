@@ -10,7 +10,6 @@
 #include <UpdateListener.hpp>
 #include <FileEventQueue.hpp>
 
-#define CHUNK_SIZE 65536
 #define RECURSIVE_FILE_WATCH 0
 
 using SignatureMap = std::map<std::string, std::vector<char>>;

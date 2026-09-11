@@ -1,56 +1,178 @@
 #include <FileHandler.hpp>
 #include <ThreadPool.hpp>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 
 namespace filesystem = std::filesystem;
 
-// Generate a signature for a given file
-std::vector<char> FileHandler::generateSignature(const std::string &filePath) {
-    FilePtr file(std::fopen(filePath.data(), "rb"));
-    if (!file) {
+void FileHandler::patchFile(FileDeltaPair &delta, const std::string &sharedFolderPath) {
+  std::string filePath = sharedFolderPath + delta.first;
+  filesystem::path tmpFilePath = filePath;
+  tmpFilePath += ".tmp";
+  FilePtr file(std::fopen(filePath.c_str(), "rb"));
+  FilePtr tmpFile(std::fopen(tmpFilePath.c_str(), "wb"));
+  if (!file || !tmpFile) {
+    std::perror("File opening failed");
+    throw std::runtime_error("Failed to open file.");
+  }
+  rs_job_t *job = rs_patch_begin(rs_file_copy_cb, file.get());
+
+  unsigned char out_chunk[CHUNK_SIZE];
+  rs_buffers_t buf = {0};
+  buf.next_in = delta.second.data();
+  buf.avail_in = delta.second.size();
+  buf.eof_in = 1;
+
+  rs_result result;
+  do {
+    buf.next_out = (char *)out_chunk;
+    buf.avail_out = sizeof(out_chunk);
+
+    result = rs_job_iter(job, &buf);
+
+    size_t written = sizeof(out_chunk) - buf.avail_out;
+    if (written > 0) {
+      size_t n = std::fwrite(out_chunk, 1, written, tmpFile.get());
+      if (n != written) {
+        if (std::ferror(tmpFile.get())) {
+          tmpFile.reset();
+          filesystem::remove(tmpFilePath);
+          throw std::runtime_error(std::string("Write failed: ") + std::strerror(errno));
+        } else {
+          tmpFile.reset();
+          filesystem::remove(tmpFilePath);
+          throw std::runtime_error("Write failed: short write.");
+        }
+      }
+    }
+
+  } while (result == RS_BLOCKED || (result == RS_DONE && buf.avail_in > 0));
+
+  if (result != RS_DONE) {
+    rs_job_free(job);
+    tmpFile.reset();
+    filesystem::remove(tmpFilePath);
+    throw std::runtime_error(std::string("Failed to patch: ") + rs_strerror(result));
+  }
+
+  rs_job_free(job);
+
+  // Move tmpFile to original file
+  file.reset();
+  tmpFile.reset();
+  filesystem::rename(tmpFilePath, filePath);
+}
+
+/*
+void FileHandler::patchFiles(SignatureMap &deltas) {
+  for (auto &[fileName, delta] : serverDeltas) {
+    filesystem::path filePath = config.sharedFolderPath + fileName;
+    filesystem::path tmpFilePath = filePath;
+    tmpFilePath += ".tmp";
+    FilePtr file(std::fopen(filePath.c_str(), "rb"));
+    FilePtr tmpFile(std::fopen(tmpFilePath.c_str(), "wb"));
+    if (!file || !tmpFile) {
       std::perror("File opening failed");
       throw std::runtime_error("Failed to open file.");
     }
+    rs_job_t *job = rs_patch_begin(rs_file_copy_cb, file.get());
 
-    // Get size of file
-    std::fseek(file.get(), 0, SEEK_END);
-    rs_long_t file_size = std::ftell(file.get());
-    std::fseek(file.get(), 0, SEEK_SET);
+    unsigned char out_chunk[CHUNK_SIZE];
+    rs_buffers_t buf = {0};
+    buf.next_in = delta.data();
+    buf.avail_in = delta.size();
+    buf.eof_in = 1;
 
-    // Determine best arguments
-    rs_magic_number magic = (rs_magic_number)0;
-    size_t block_len = 0;
-    size_t strong_len = 0;
-    rs_result res;
-    if ((res = rs_sig_args(file_size, &magic, &block_len, &strong_len)) != RS_DONE) {
-      throw std::runtime_error(std::string("Failed to generate signature arguments: ") + rs_strerror(res));
+    rs_result result;
+    do {
+      buf.next_out = (char *)out_chunk;
+      buf.avail_out = sizeof(out_chunk);
+
+      result = rs_job_iter(job, &buf);
+
+      size_t written = sizeof(out_chunk) - buf.avail_out;
+      if (written > 0) {
+        size_t n = std::fwrite(out_chunk, 1, written, tmpFile.get());
+        if (n != written) {
+          if (std::ferror(tmpFile.get())) {
+            tmpFile.reset();
+            filesystem::remove(tmpFilePath);
+            throw std::runtime_error(std::string("Write failed: ") + std::strerror(errno));
+          } else {
+            tmpFile.reset();
+            filesystem::remove(tmpFilePath);
+            throw std::runtime_error("Write failed: short write.");
+          }
+        }
+      }
+
+    } while (result == RS_BLOCKED || (result == RS_DONE && buf.avail_in > 0));
+
+    if (result != RS_DONE) {
+      rs_job_free(job);
+      tmpFile.reset();
+      filesystem::remove(tmpFilePath);
+      throw std::runtime_error(std::string("Failed to patch: ") + rs_strerror(result));
     }
 
-    FilePtr sig_file(std::tmpfile());
-    if ((res = rs_sig_file(file.get(), sig_file.get(), block_len, strong_len, magic, nullptr)) != RS_DONE) {
-      throw std::runtime_error(std::string("Failed to generate signature file: ") + rs_strerror(res));
-    }
+    rs_job_free(job);
 
-    // Get size of sig_file
-    std::fseek(sig_file.get(), 0, SEEK_END);
-    rs_long_t sig_file_size = std::ftell(sig_file.get());
-    if (sig_file_size < 0) {
-      throw std::runtime_error("ftell failed on signature file");
-    }
-    std::fseek(sig_file.get(), 0, SEEK_SET);
+    // Move tmpFile to original file
+    file.reset();
+    tmpFile.reset();
+    filesystem::rename(tmpFilePath, filePath);
+  }
+}
+*/
 
-    std::vector<char> buffer(sig_file_size);
-    size_t bytesRead = std::fread(buffer.data(), 1, sig_file_size, sig_file.get());
-    if (std::ferror(sig_file.get())) {
-      throw std::runtime_error("Failed to read signature file.");
-    } else if (std::feof(sig_file.get()) && bytesRead < sig_file_size) {
-      throw std::runtime_error("Failed to read all signature file bytes.");
-    }
+// Generate a signature for a given file
+FileSignaturePair FileHandler::generateSignature(const std::string &sharedFolderPath, const std::string &fileName) {
+  std::string filePath = sharedFolderPath + fileName;
+  FilePtr file(std::fopen(filePath.data(), "rb"));
+  if (!file) {
+    std::perror("File opening failed");
+    throw std::runtime_error("Failed to open file.");
+  }
 
-    return buffer;
+  // Get size of file
+  std::fseek(file.get(), 0, SEEK_END);
+  rs_long_t file_size = std::ftell(file.get());
+  std::fseek(file.get(), 0, SEEK_SET);
+
+  // Determine best arguments
+  rs_magic_number magic = (rs_magic_number)0;
+  size_t block_len = 0;
+  size_t strong_len = 0;
+  rs_result res;
+  if ((res = rs_sig_args(file_size, &magic, &block_len, &strong_len)) != RS_DONE) {
+    throw std::runtime_error(std::string("Failed to generate signature arguments: ") + rs_strerror(res));
+  }
+
+  FilePtr sig_file(std::tmpfile());
+  if ((res = rs_sig_file(file.get(), sig_file.get(), block_len, strong_len, magic, nullptr)) != RS_DONE) {
+    throw std::runtime_error(std::string("Failed to generate signature file: ") + rs_strerror(res));
+  }
+
+  // Get size of sig_file
+  std::fseek(sig_file.get(), 0, SEEK_END);
+  rs_long_t sig_file_size = std::ftell(sig_file.get());
+  if (sig_file_size < 0) {
+    throw std::runtime_error("ftell failed on signature file");
+  }
+  std::fseek(sig_file.get(), 0, SEEK_SET);
+
+  std::vector<char> buffer(sig_file_size);
+  size_t bytesRead = std::fread(buffer.data(), 1, sig_file_size, sig_file.get());
+  if (std::ferror(sig_file.get())) {
+    throw std::runtime_error("Failed to read signature file.");
+  } else if (std::feof(sig_file.get()) && bytesRead < sig_file_size) {
+    throw std::runtime_error("Failed to read all signature file bytes.");
+  }
+
+  return {fileName, std::move(buffer)};
 }
 
 // Generate map of file name -> librsync signatures for a given directory path
@@ -62,7 +184,7 @@ SignatureMap FileHandler::generateSignatures(const std::string &sharedFolderPath
   if (filesystem::exists(sharedFolderPath) && filesystem::is_directory(sharedFolderPath)) {
     for (const auto &entry : filesystem::directory_iterator(sharedFolderPath)) {
       std::string fileName = entry.path().filename().string();
-      
+
       fileNames.push_back(fileName);
     }
   } else {
@@ -70,9 +192,7 @@ SignatureMap FileHandler::generateSignatures(const std::string &sharedFolderPath
   }
 
   for (auto &fileName : fileNames) {
-    std::string filePath = sharedFolderPath + fileName;
-    std::vector<char> buffer = generateSignature(filePath);
-    signatures.insert({fileName, buffer});
+    signatures.insert(generateSignature(sharedFolderPath, fileName));
   }
 
   return signatures;
@@ -144,14 +264,25 @@ FileDeltaPair FileHandler::threadComputeDelta(const std::vector<char> &signature
   return {fileName, std::move(deltaBuffer)};
 }
 
-SignatureMap FileHandler::generateDeltas(const SignatureMap &serverSignatures, const SignatureMap &clientSignatures, const std::string &sharedFolderPath) {
+FileDeltaPair FileHandler::generateDelta(const FileDeltaPair &authoritativeSignature, const FileSignaturePair &toPatchSignature, const std::string &sharedFolderPath) {
+  if (authoritativeSignature.first.compare(toPatchSignature.first) == 0) {
+    std::string filePath = sharedFolderPath + toPatchSignature.first;
+    return FileHandler::threadComputeDelta(toPatchSignature.second, filePath, toPatchSignature.first);
+  } else {
+    // TODO: Handle this error
+    throw std::runtime_error("Failed to find client file name key in server map.");
+  }
+}
+
+// Computes patches for toPatchSignature against authoritativeSignature (source of truth), what will be in the delta
+SignatureMap FileHandler::generateDeltas(const SignatureMap &authoritativeSignature, const SignatureMap &toPatchSignature, const std::string &sharedFolderPath) {
   SignatureMap deltas;
   ThreadPool pool(CPU_CORES);
 
   std::vector<std::future<FileDeltaPair>> fileToDeltaPairs;
 
-  for (auto &[fileName, signatureBuffer] : clientSignatures) {
-    if (auto search = serverSignatures.find(fileName); search != serverSignatures.end()) {
+  for (auto &[fileName, signatureBuffer] : toPatchSignature) {
+    if (auto search = authoritativeSignature.find(fileName); search != authoritativeSignature.end()) {
       std::string filePath = sharedFolderPath + fileName;
       fileToDeltaPairs.push_back(pool.submit(&FileHandler::threadComputeDelta, signatureBuffer, filePath, fileName));
     } else {
