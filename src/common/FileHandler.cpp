@@ -8,6 +8,13 @@
 
 namespace filesystem = std::filesystem;
 
+/**
+ * @brief Patch a file with @p delta
+ * 
+ * Patches the fileName contained within @p delta located in @p sharedFolderPath
+ * @param delta @ref FileDeltaPair containing the fileName and signature
+ * @param sharedFolderPath The folder containing the fileName
+ */
 void FileHandler::patchFile(FileDeltaPair &delta, const std::string &sharedFolderPath) {
   std::string filePath = sharedFolderPath + delta.first;
   filesystem::path tmpFilePath = filePath;
@@ -66,69 +73,14 @@ void FileHandler::patchFile(FileDeltaPair &delta, const std::string &sharedFolde
   filesystem::rename(tmpFilePath, filePath);
 }
 
-/*
-void FileHandler::patchFiles(SignatureMap &deltas) {
-  for (auto &[fileName, delta] : serverDeltas) {
-    filesystem::path filePath = config.sharedFolderPath + fileName;
-    filesystem::path tmpFilePath = filePath;
-    tmpFilePath += ".tmp";
-    FilePtr file(std::fopen(filePath.c_str(), "rb"));
-    FilePtr tmpFile(std::fopen(tmpFilePath.c_str(), "wb"));
-    if (!file || !tmpFile) {
-      std::perror("File opening failed");
-      throw std::runtime_error("Failed to open file.");
-    }
-    rs_job_t *job = rs_patch_begin(rs_file_copy_cb, file.get());
-
-    unsigned char out_chunk[CHUNK_SIZE];
-    rs_buffers_t buf = {0};
-    buf.next_in = delta.data();
-    buf.avail_in = delta.size();
-    buf.eof_in = 1;
-
-    rs_result result;
-    do {
-      buf.next_out = (char *)out_chunk;
-      buf.avail_out = sizeof(out_chunk);
-
-      result = rs_job_iter(job, &buf);
-
-      size_t written = sizeof(out_chunk) - buf.avail_out;
-      if (written > 0) {
-        size_t n = std::fwrite(out_chunk, 1, written, tmpFile.get());
-        if (n != written) {
-          if (std::ferror(tmpFile.get())) {
-            tmpFile.reset();
-            filesystem::remove(tmpFilePath);
-            throw std::runtime_error(std::string("Write failed: ") + std::strerror(errno));
-          } else {
-            tmpFile.reset();
-            filesystem::remove(tmpFilePath);
-            throw std::runtime_error("Write failed: short write.");
-          }
-        }
-      }
-
-    } while (result == RS_BLOCKED || (result == RS_DONE && buf.avail_in > 0));
-
-    if (result != RS_DONE) {
-      rs_job_free(job);
-      tmpFile.reset();
-      filesystem::remove(tmpFilePath);
-      throw std::runtime_error(std::string("Failed to patch: ") + rs_strerror(result));
-    }
-
-    rs_job_free(job);
-
-    // Move tmpFile to original file
-    file.reset();
-    tmpFile.reset();
-    filesystem::rename(tmpFilePath, filePath);
-  }
-}
-*/
-
-// Generate a signature for a given file
+/**
+ * @brief Generate signature for file
+ * 
+ * Generate signature for @p fileName in folder @p sharedFolderPath
+ * @param sharedFolderPath The path of the shared folder
+ * @param fileName The name of the file
+ * @return A @ref FileSignaturePair containing @p fileName and signature
+ */
 FileSignaturePair FileHandler::generateSignature(const std::string &sharedFolderPath, const std::string &fileName) {
   std::string filePath = sharedFolderPath + fileName;
   FilePtr file(std::fopen(filePath.data(), "rb"));
@@ -281,6 +233,7 @@ SignatureMap FileHandler::generateDeltas(const SignatureMap &authoritativeSignat
 
   std::vector<std::future<FileDeltaPair>> fileToDeltaPairs;
 
+  // For each signature, compute delta and add to pairs
   for (auto &[fileName, signatureBuffer] : toPatchSignature) {
     if (auto search = authoritativeSignature.find(fileName); search != authoritativeSignature.end()) {
       std::string filePath = sharedFolderPath + fileName;
@@ -291,6 +244,7 @@ SignatureMap FileHandler::generateDeltas(const SignatureMap &authoritativeSignat
     }
   }
 
+  // Colllect results
   for (auto &fut : fileToDeltaPairs) {
     FileDeltaPair result = fut.get();
     deltas.insert(std::move(result));

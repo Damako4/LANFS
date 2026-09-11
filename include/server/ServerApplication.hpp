@@ -13,7 +13,7 @@ class ServerApplication {
 public:
     ServerApplication(const ApplicationConfig& config);
     void run();
-    void handleSslSession(SSL* ssl) const;
+    void handleSSLSession(SSL* ssl) const;
 private:
     ApplicationConfig config;
 

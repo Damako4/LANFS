@@ -12,7 +12,13 @@
 
 namespace filesystem = std::filesystem;
 
-void ServerApplication::handleSslSession(SSL *ssl) const {
+/**
+ * @brief Handles an incoming SSL session and dispatch commands
+ * 
+ * Reads protocol headers and dispatches based on Command type
+ * @param ssl The active SSL connection to the client
+ */
+void ServerApplication::handleSSLSession(SSL *ssl) const {
   ProtocolHeader header;
   while (ProtocolHandler::readHeaderBytes(ssl, header)) {
     // Read stream bytes
@@ -69,6 +75,11 @@ void ServerApplication::handleSslSession(SSL *ssl) const {
   }
 }
 
+/**
+ * @brief Runs the client acceptor loop
+ * 
+ * Accepts a client, run @ref handleSSLSession and block until done
+ */
 void ServerApplication::run() {
   while (1) {
     ERR_clear_error(); // Before each new connection
@@ -97,7 +108,7 @@ void ServerApplication::run() {
     }
 
     try {
-      handleSslSession(ssl.get());
+      handleSSLSession(ssl.get());
     } catch (const std::exception &e) {
       std::cout << "Client connection closed." << std::endl;
       std::cerr << "Error: " << e.what() << std::endl;
@@ -108,6 +119,9 @@ void ServerApplication::run() {
   }
 }
 
+/**
+ * @brief Sets up SSL / TLS context and @ref generateSignatures()
+ */
 ServerApplication::ServerApplication(const ApplicationConfig &config) : config(config) {
   ctx.reset(SSL_CTX_new(TLS_server_method()));
   if (!ctx) {
