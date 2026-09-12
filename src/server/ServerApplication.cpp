@@ -12,7 +12,7 @@
 
 namespace filesystem = std::filesystem;
 
-void ServerApplication::handleSSLSession(SSL *ssl) const {
+void ServerApplication::handleSSLSession(SSL *ssl) {
   ProtocolHeader header;
   while (true) {
     // Read header bytes
@@ -40,19 +40,18 @@ void ServerApplication::handleSSLSession(SSL *ssl) const {
       // File name to update is stored in buffer
       std::string fileName;
       result.get().convert(fileName);
-      std::vector<char> signature;
-
+      
       // Get signature for that filename
-      if (auto search = serverSignatures.find(fileName); search != serverSignatures.end()) {
-        signature = search->second;
-      } else {
-        throw std::runtime_error("Failed to find client file name key in server map.");
+      // TODO: Mutex for the server signatures when all clients write
+      auto [it, inserted] = serverSignatures.try_emplace(fileName);
+      if (inserted) {
+          // key didn't exist — generate the signature now and store it
+          it->second = FileHandler::generateSignature(fileName).second;
       }
 
       // Send signature and then wait for a delta
       msgpack::sbuffer sbuf;
-      auto fileNameSignature = std::make_pair(fileName, signature);
-      msgpack::pack(sbuf, fileNameSignature);
+      msgpack::pack(sbuf, it->first);
       ProtocolHandler::writeHeaderBytes(ssl, Command::Signature, 0, sbuf.size());
       ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
       break;

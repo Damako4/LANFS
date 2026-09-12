@@ -19,6 +19,7 @@ void UpdateListener::handleFileAction(efsw::WatchID watchid, const std::string &
     std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Delete" << std::endl;
     break;
   case efsw::Actions::Modified: {
+    // Debounce multiple modify events within a small time frame
     auto now = std::chrono::steady_clock::now();
     {
       std::lock_guard<std::mutex> lock(debounceMutex);

@@ -77,6 +77,7 @@ void ClientApplication::run() {
     throw std::runtime_error("Directory not found: " + config.sharedFolderPath);
   }
   for (auto &fileName : fileNames) {
+    std::cout << "Generating signature for " << fileName << std::endl;
     signatures.insert(FileHandler::generateSignature(fileName));
   }
 
@@ -152,7 +153,7 @@ void ClientApplication::run() {
       msgpack::unpack(result, buffer.data(), header.streamLength);
       switch (header.command) {
       case Command::Signature: {
-
+        // Send delta for server to patch with
         break;
       }
       case Command::Update: {

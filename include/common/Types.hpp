@@ -4,6 +4,7 @@
 #include <vector>
 #include <map>
 #include <utility>
+#include <librsync.h>
 
 /**
  * @brief Maps a file's relative path to its current librsync signature.

@@ -6,9 +6,7 @@
 #include <SslDeleters.hpp>
 #include <map>
 #include <ProtocolHandler.hpp>
-
-using SignatureMap = std::map<std::string, std::vector<char>>;
-using DeltaMap = std::map<std::string, std::vector<char>>;
+#include <Types.hpp>
 
 class ServerApplication {
 public:
@@ -34,7 +32,7 @@ public:
      * Reads protocol headers and dispatches based on Command type
      * @param ssl The active SSL connection to the client
      */
-    void handleSSLSession(SSL* ssl) const;
+    void handleSSLSession(SSL* ssl);
 private:
     ApplicationConfig config; ///< ApplicationConfig for the server
 
