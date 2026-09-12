@@ -2,7 +2,7 @@
 #include <cstring>
 #include <iostream>
 
-bool ProtocolHandler::readExact(SSL *ssl, void *destination, size_t bytesToRead) {
+void ProtocolHandler::readExact(SSL *ssl, void *destination, size_t bytesToRead) {
   uint8_t *ptr = static_cast<uint8_t *>(destination);
   size_t totalRead = 0;
 
@@ -13,13 +13,12 @@ bool ProtocolHandler::readExact(SSL *ssl, void *destination, size_t bytesToRead)
     if (ret <= 0) {
       int err = SSL_get_error(ssl, ret);
       if (totalRead == 0 && (err == SSL_ERROR_ZERO_RETURN || (err == SSL_ERROR_SYSCALL && nread == 0))) {
-        return false;
+        throw ConnectionClosed();
       }
       throw std::runtime_error("TLS read failure or unexpected connection drop");
     }
     totalRead += nread;
   }
-  return true;
 }
 
 void ProtocolHandler::writeExact(SSL *ssl, const void *source, size_t bytesToWrite) {
@@ -35,18 +34,14 @@ void ProtocolHandler::writeExact(SSL *ssl, const void *source, size_t bytesToWri
   }
 }
 
-bool ProtocolHandler::readHeaderBytes(SSL *ssl, ProtocolHeader &outHeader) {
+void ProtocolHandler::readHeaderBytes(SSL *ssl, ProtocolHeader &outHeader) {
   uint8_t raw[5];
 
-  if (!readExact(ssl, raw, sizeof(raw))) {
-    return false;
-  }
+  readExact(ssl, raw, sizeof(raw));
 
   outHeader.command = static_cast<Command>(raw[0] & 0x03);
   outHeader.flags = (raw[0] >> 2) & 0x3F;
   std::memcpy(&outHeader.streamLength, &raw[1], sizeof(outHeader.streamLength));
-
-  return true;
 }
 
 void ProtocolHandler::writeHeaderBytes(SSL *ssl, Command command, uint8_t flags, uint32_t streamLength) {

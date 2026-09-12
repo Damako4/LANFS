@@ -12,15 +12,12 @@
 
 namespace filesystem = std::filesystem;
 
-/**
- * @brief Handles an incoming SSL session and dispatch commands
- * 
- * Reads protocol headers and dispatches based on Command type
- * @param ssl The active SSL connection to the client
- */
 void ServerApplication::handleSSLSession(SSL *ssl) const {
   ProtocolHeader header;
-  while (ProtocolHandler::readHeaderBytes(ssl, header)) {
+  while (true) {
+    // Read header bytes
+    ProtocolHandler::readHeaderBytes(ssl, header);
+
     // Read stream bytes
     std::string buffer(header.streamLength, '\0');
     ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
@@ -32,7 +29,7 @@ void ServerApplication::handleSSLSession(SSL *ssl) const {
       result.get().convert(clientSignatures);
 
       // Generate file deltas and send over
-      SignatureMap deltas = FileHandler::generateDeltas(serverSignatures, clientSignatures, config.sharedFolderPath);
+      SignatureMap deltas = FileHandler::generateDeltas(serverSignatures, clientSignatures);
       msgpack::sbuffer sbuf;
       msgpack::pack(sbuf, deltas);
       ProtocolHandler::writeHeaderBytes(ssl, Command::Delta, 0, sbuf.size());
@@ -49,7 +46,6 @@ void ServerApplication::handleSSLSession(SSL *ssl) const {
       if (auto search = serverSignatures.find(fileName); search != serverSignatures.end()) {
         signature = search->second;
       } else {
-        // TODO: Handle this error
         throw std::runtime_error("Failed to find client file name key in server map.");
       }
 
@@ -65,7 +61,7 @@ void ServerApplication::handleSSLSession(SSL *ssl) const {
       // Apply delta
       FileDeltaPair fileDeltaPair;
       result.get().convert(fileDeltaPair);
-      FileHandler::patchFile(fileDeltaPair, config.sharedFolderPath);
+      FileHandler::patchFile(fileDeltaPair);
       std::cout << "Updating File!" << std::endl;
       break;
     }
@@ -75,11 +71,6 @@ void ServerApplication::handleSSLSession(SSL *ssl) const {
   }
 }
 
-/**
- * @brief Runs the client acceptor loop
- * 
- * Accepts a client, run @ref handleSSLSession and block until done
- */
 void ServerApplication::run() {
   while (1) {
     ERR_clear_error(); // Before each new connection
@@ -109,19 +100,18 @@ void ServerApplication::run() {
 
     try {
       handleSSLSession(ssl.get());
+    } catch (const ConnectionClosed &) {
+      std::cout << "Client connection closed." << std::endl;
+      SSL_shutdown(ssl.get());
+      continue;
     } catch (const std::exception &e) {
       std::cout << "Client connection closed." << std::endl;
       std::cerr << "Error: " << e.what() << std::endl;
       continue;
-    }
-
-    std::cout << "Client connection closed." << std::endl;
+    }    
   }
 }
 
-/**
- * @brief Sets up SSL / TLS context and @ref generateSignatures()
- */
 ServerApplication::ServerApplication(const ApplicationConfig &config) : config(config) {
   ctx.reset(SSL_CTX_new(TLS_server_method()));
   if (!ctx) {
@@ -165,5 +155,5 @@ ServerApplication::ServerApplication(const ApplicationConfig &config) : config(c
     throw std::runtime_error("Error setting up acceptor socket: " + getLastSSLError());
   }
 
-  serverSignatures = FileHandler::generateSignatures(config.sharedFolderPath);
+  FileHandler::init(config.sharedFolderPath);
 }

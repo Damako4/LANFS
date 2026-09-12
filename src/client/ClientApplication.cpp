@@ -66,7 +66,20 @@ void ClientApplication::run() {
   }
 
   // That initial packet (WE NEED TO SEND THIS)
-  signatures = FileHandler::generateSignatures(config.sharedFolderPath);
+  std::vector<std::string> fileNames;
+  if (filesystem::exists(config.sharedFolderPath) && filesystem::is_directory(config.sharedFolderPath)) {
+    for (const auto &entry : filesystem::directory_iterator(config.sharedFolderPath)) {
+      std::string fileName = entry.path().filename().string();
+
+      fileNames.push_back(fileName);
+    }
+  } else {
+    throw std::runtime_error("Directory not found: " + config.sharedFolderPath);
+  }
+  for (auto &fileName : fileNames) {
+    signatures.insert(FileHandler::generateSignature(fileName));
+  }
+
   msgpack::sbuffer sbuf;
   msgpack::pack(sbuf, signatures);
   ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Signature, /*flags=*/0, sbuf.size());
@@ -102,12 +115,12 @@ void ClientApplication::run() {
       result.get().convert(serverFileSig);
 
       // Generate my signature for that file, and update in local storage
-      auto clientFileSig = FileHandler::generateSignature(config.sharedFolderPath, fileName);
+      auto clientFileSig = FileHandler::generateSignature(fileName);
       signatures.at(fileName) = clientFileSig.second;
 
       // Calculate deltas
-      FileDeltaPair fileDeltaPair = FileHandler::generateDelta(clientFileSig, serverFileSig, config.sharedFolderPath);
-      
+      FileDeltaPair fileDeltaPair = FileHandler::generateDelta(clientFileSig, serverFileSig);
+
       // Send patch
       sbuf.clear();
       msgpack::pack(sbuf, fileDeltaPair);
