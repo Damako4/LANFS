@@ -7,3 +7,4 @@ build
 shared-client/
 shared-server/
 application.pu
+docs/html
