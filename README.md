@@ -6,6 +6,7 @@ A LAN-based file synchronization application that keeps a shared folder in sync 
 
 ![C++](https://img.shields.io/badge/c%2B%2B-%2300599C.svg?style=for-the-badge&logo=cplusplus&logoColor=white)![CMake](https://img.shields.io/badge/CMake-%23008FBA.svg?style=for-the-badge&logo=cmake&logoColor=white)
 
+📖 [Full API documentation](https://damako4.github.io/LANsync)
 
 ![App Screenshot](https://i.imgur.com/YN101Ru.png)
 
