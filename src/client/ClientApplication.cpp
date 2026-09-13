@@ -1,5 +1,6 @@
 #include <ClientApplication.hpp>
 #include <FileHandler.hpp>
+#include <Logging.hpp>
 #include <ProtocolHandler.hpp>
 #include <Tools.hpp>
 #include <UpdateListener.hpp>
@@ -34,20 +35,18 @@ ClientApplication::ClientApplication(const ApplicationConfig &config) : config(c
     throw std::runtime_error(
         "Failed to set the minimum TLS protocol version: " + getLastSSLError());
   }
-}
 
-void ClientApplication::run() {
   std::string serverName = config.hostname + ":" + config.hostport;
   std::unique_ptr<BIO, BioDeleter> clientBio(BIO_new_connect(serverName.c_str()));
   if (!clientBio) {
     throw std::runtime_error("Error creating connect BIO: " + getLastSSLError());
   }
 
-  std::cout << "Connecting to " << serverName << "..." << std::endl;
+  LOG_INFO("Connecting to " << serverName << "...");
   if (BIO_do_connect(clientBio.get()) <= 0) {
     throw std::runtime_error("Failed to connect to server: " + getLastSSLError());
   }
-  std::cout << "Connected!" << std::endl;
+  LOG_INFO("Connected!");
 
   // We want to reach out to server everytime that we start up to get latest file updates
   ssl.reset(SSL_new(ctx.get()));
@@ -65,26 +64,27 @@ void ClientApplication::run() {
     throw std::runtime_error("Failed to connect to the server: " + getLastSSLError());
   }
 
-  // That initial packet (WE NEED TO SEND THIS)
+  // Initialize file handler and protocol handler
+  FileHandler::init(config.sharedFolderPath);
+  protocolHandler.emplace(ssl.get());
+
+  // Generate client file records / signatures and zero out versions
   std::vector<std::string> fileNames;
   if (filesystem::exists(config.sharedFolderPath) && filesystem::is_directory(config.sharedFolderPath)) {
     for (const auto &entry : filesystem::directory_iterator(config.sharedFolderPath)) {
       std::string fileName = entry.path().filename().string();
-
       fileNames.push_back(fileName);
     }
   } else {
     throw std::runtime_error("Directory not found: " + config.sharedFolderPath);
   }
   for (auto &fileName : fileNames) {
-    std::cout << "Generating signature for " << fileName << std::endl;
-    signatures.insert(FileHandler::generateSignature(fileName));
+    LOG_DEBUG("Initial record generation for " << fileName);
+    FileRecord record;
+    record.signature = FileHandler::generateSignature(fileName).second;
+    record.version = 0;
+    signatures.insert({fileName, std::move(record)});
   }
-
-  msgpack::sbuffer sbuf;
-  msgpack::pack(sbuf, signatures);
-  ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Signature, /*flags=*/0, sbuf.size());
-  ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
 
   // Setup file watcher
   fileWatcher.reset(new efsw::FileWatcher());
@@ -94,39 +94,21 @@ void ClientApplication::run() {
     std::cerr << "addWatch failed with code: " << watchID << std::endl;
   }
   fileWatcher->watch();
+}
 
-  ProtocolHeader header;
+void ClientApplication::run() {
+  // That initial packet (WE NEED TO SEND THIS)
+  msgpack::sbuffer sbuf;
+  std::string ping = "Ping!";
+  msgpack::pack(sbuf, ping);
+  protocolHandler.value().writeHeaderBytes(Command::NotImplemented, /*flags=*/0, sbuf.size());
+  protocolHandler.value().writeStreamBytes(sbuf.data(), sbuf.size());
+
   int fd = SSL_get_fd(ssl.get());
-  msgpack::object_handle result;
   while (true) {
+    // Is there a file event from the listener thread?
     if (auto event = queue.pop()) {
-      msgpack::sbuffer sbuf;
-      std::string fileName = event.value().fileName;
-      msgpack::pack(sbuf, fileName);
-      // Send server update command
-      ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Update, 0, sbuf.size());
-      ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
-
-      // Receive deltas
-      ProtocolHandler::readHeaderBytes(ssl.get(), header);
-      std::string buffer(header.streamLength, '\0');
-      ProtocolHandler::readStreamBytes(ssl.get(), buffer, header.streamLength);
-      msgpack::unpack(result, buffer.data(), header.streamLength);
-      FileDeltaPair serverFileSig;
-      result.get().convert(serverFileSig);
-
-      // Generate my signature for that file, and update in local storage
-      auto clientFileSig = FileHandler::generateSignature(fileName);
-      signatures.at(fileName) = clientFileSig.second;
-
-      // Calculate deltas
-      FileDeltaPair fileDeltaPair = FileHandler::generateDelta(clientFileSig, serverFileSig);
-
-      // Send patch
-      sbuf.clear();
-      msgpack::pack(sbuf, fileDeltaPair);
-      ProtocolHandler::writeHeaderBytes(ssl.get(), Command::Delta, 0, sbuf.size());
-      ProtocolHandler::writeStreamBytes(ssl.get(), sbuf.data(), sbuf.size());
+      handleEdit(event.value());
     }
 
     pollfd pfd{fd, POLLIN, 0};
@@ -145,20 +127,22 @@ void ClientApplication::run() {
     }
 
     if (pfd.revents & POLLIN) {
-      ProtocolHandler::readHeaderBytes(ssl.get(), header);
+      protocolHandler.value().readHeaderBytes(header);
       // Read stream bytes
       std::string buffer(header.streamLength, '\0');
-      ProtocolHandler::readStreamBytes(ssl.get(), buffer, header.streamLength);
+      protocolHandler.value().readStreamBytes(buffer, header.streamLength);
       msgpack::object_handle result;
       msgpack::unpack(result, buffer.data(), header.streamLength);
       switch (header.command) {
       case Command::Signature: {
-        // Send delta for server to patch with
+
         break;
       }
       case Command::Update: {
 
         break;
+      }
+      case Command::NotImplemented: {
       }
       default:
         break;
@@ -167,6 +151,33 @@ void ClientApplication::run() {
   }
 
   shutdown();
+}
+
+void ClientApplication::handleEdit(const FileEvent &event) {
+  LOG_DEBUG("File " << event.fileName << " updated");
+  msgpack::sbuffer sbuf;
+  std::string fileName = event.fileName;
+  msgpack::pack(sbuf, fileName);
+  // Send server update command
+  protocolHandler.value().writeHeaderBytes(Command::Update, 0, sbuf.size());
+  protocolHandler.value().writeStreamBytes(sbuf.data(), sbuf.size());
+
+  // Receive signatures
+  protocolHandler.value().readHeaderBytes(header);
+  std::string buffer(header.streamLength, '\0');
+  protocolHandler.value().readStreamBytes(buffer, header.streamLength);
+  msgpack::unpack(result, buffer.data(), header.streamLength);
+  Signature serverSignature;
+  result.get().convert(serverSignature);
+
+  // Calculate deltas
+  Delta delta = FileHandler::generateDelta(std::make_pair(fileName, serverSignature));
+
+  // Send deltas to patch with
+  sbuf.clear();
+  msgpack::pack(sbuf, delta);
+  protocolHandler.value().writeHeaderBytes(Command::Delta, 0, sbuf.size());
+  protocolHandler.value().writeStreamBytes(sbuf.data(), sbuf.size());
 }
 
 void ClientApplication::shutdown() {

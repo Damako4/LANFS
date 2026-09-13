@@ -25,7 +25,7 @@ public:
      * 
      * @param delta @ref FileDeltaPair containing the fileName and delta
      */
-    static void patchFile(FileDeltaPair &delta);
+    static void patchFile(const FileDeltaPair &delta);
     
     /**
      * @brief Generate signature for @p fileName
@@ -36,26 +36,32 @@ public:
     static FileSignaturePair generateSignature(const std::string &fileName);
 
     /**
-     * @brief Generate a @ref FileDeltaPair for a file
+     * @brief Generates signatures for all files in @p folderPath
      * 
-     * Computes the delta needed to bring the file described by @p toPatchSignature
-     * up to date with @p authoritativeSignature (the current source of truth).
-     * @param authoritativeSignature The newest signature, the source of truth
-     * @param toPatchSignature The signature for the file that is to be patched
-     * @return A FileDeltaPair containing the file name and the delta to patch with
+     * @param folderPath The path of the folder
+     * @return A SignatureMap containing file names mapped to signatures
      */
-    static FileDeltaPair generateDelta(const FileDeltaPair &authoritativeSignature, const FileSignaturePair &toPatchSignature);
+    static SignatureMap generateSignatureBatch(const std::string &folderPath);
 
     /**
-     * @brief Like @ref generateDelta but for a SignatureMap
+     * @brief Generate a @ref Delta for a file
      * 
-     * Generates a SignatureMap containing deltas for every file in @p toPatchSignature,
+     * Computes the delta for the file in @p toPatchSignature pair with that pairs signature
+     * @param toPatchSignaturePair The signature to generate delta for file against
+     * @return The computed @ref Delta
+     */
+    static Delta generateDelta(const FileSignaturePair &toPatchSignaturePair);
+
+    /**
+     * @brief Like @ref generateDelta but for a RecordMap
+     * 
+     * Generates a RecordMap containing deltas for every file in @p toPatchSignature,
     * computed in parallel using a thread pool.
      * @param authoritativeSignature The newest signature map, the source of truth
      * @param toPatchSignature The signature map for the files that are to be patched
-     * @return A SignatureMap containing the file names and deltas to patch with
+     * @return A RecordMap containing the file names and deltas to patch with
      */
-    static SignatureMap generateDeltas(const SignatureMap &authoritativeSignature, const SignatureMap &toPatchSignature);
+    static DeltaMap generateDeltas(const SignatureMap &authoritativeSignature, const SignatureMap &toPatchSignature);
 private:
     static std::string sharedFolderPath;
     /**
@@ -72,7 +78,7 @@ private:
      * @param signatureBuffer The buffer containing the signature
      * @param filePath The folder containing the file
      * @param fileName The name of the file
-     * @return A FileDeltaPair containing the file name and the delta to apply
+     * @return A pair with file name and computed computed
      */
     static FileDeltaPair threadComputeDelta(const std::vector<char> &signatureBuffer, const std::string &filePath, const std::string &fileName);
 };

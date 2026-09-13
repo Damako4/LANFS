@@ -53,6 +53,8 @@ target_link_libraries(lanfs_core PUBLIC
     ${LIBRSYNC_LIBRARY}
 )
 
+target_compile_definitions(lanfs_core PUBLIC $<$<CONFIG:Debug>:DEBUG>)
+
 add_executable(lanfs_server
     src/server/main.cpp
     src/server/ServerApplication.cpp

@@ -36,8 +36,8 @@ public:
 private:
     ApplicationConfig config; ///< ApplicationConfig for the server
 
-    SignatureMap serverSignatures; ///< SignatureMap containing the servers latest signatures
-    SignatureMap serverDeltas; ///< @ref DeltaMap containing the servers latest deltas
+    RecordMap signatures; ///< RecordMap containing the servers latest signatures
+    RecordMap serverDeltas; ///< @ref DeltaMap containing the servers latest deltas
     std::unique_ptr<BIO, BioDeleter> acceptor;
     std::unique_ptr<SSL_CTX, SslCtxDeleter> ctx;    
 };

@@ -10,6 +10,7 @@
 #include <UpdateListener.hpp>
 #include <FileEventQueue.hpp>
 #include <Types.hpp>
+#include <ProtocolHandler.hpp>
 
 #define RECURSIVE_FILE_WATCH 0
 
@@ -28,6 +29,13 @@ public:
    */
   void run();
 
+  /**
+   * @brief Handles a file edit event by notifying server
+   * 
+   * @param event The file event that occured
+   */
+  void handleEdit(const FileEvent &event);
+
 
   /**
    * @brief Stops the file watcher and shuts down the SSL connection.
@@ -43,7 +51,9 @@ public:
 
 private:
   ApplicationConfig config; ///< ApplicationConfig for the client
-  SignatureMap signatures; ///< SignatureMap containing the clients latest signatures
+  RecordMap signatures; ///< RecordMap containing the clients latest signatures
+
+  std::optional<ProtocolHandler> protocolHandler;
 
   std::unique_ptr<SSL_CTX, SslCtxDeleter> ctx;
   std::unique_ptr<SSL, SslDeleter> ssl;
@@ -53,4 +63,7 @@ private:
   std::unique_ptr<efsw::FileWatcher> fileWatcher; ///< File watcher thread to call @ref UpdateListener
   efsw::WatchID watchID = -1;
   bool running = false;
+
+  ProtocolHeader header;
+  msgpack::object_handle result;
 };

@@ -13,7 +13,7 @@ void FileHandler::init(const std::string &path) {
   sharedFolderPath = path;
 }
 
-void FileHandler::patchFile(FileDeltaPair &delta) {
+void FileHandler::patchFile(const FileDeltaPair &delta) {
   std::string filePath = sharedFolderPath + delta.first;
   filesystem::path tmpFilePath = filePath;
   tmpFilePath += ".tmp";
@@ -27,7 +27,7 @@ void FileHandler::patchFile(FileDeltaPair &delta) {
 
   unsigned char out_chunk[CHUNK_SIZE];
   rs_buffers_t buf = {0};
-  buf.next_in = delta.second.data();
+  buf.next_in = const_cast<char*>(delta.second.data());
   buf.avail_in = delta.second.size();
   buf.eof_in = 1;
 
@@ -69,6 +69,29 @@ void FileHandler::patchFile(FileDeltaPair &delta) {
   file.reset();
   tmpFile.reset();
   filesystem::rename(tmpFilePath, filePath);
+}
+
+SignatureMap FileHandler::generateSignatureBatch(const std::string &folderPath) {
+  std::map<std::string, std::vector<char>> signatures;
+  std::vector<std::string> fileNames;
+
+  if (filesystem::exists(folderPath) && filesystem::is_directory(folderPath)) {
+    for (const auto &entry : filesystem::directory_iterator(folderPath)) {
+      std::string fileName = entry.path().filename().string();
+      
+      fileNames.push_back(fileName);
+    }
+  } else {
+    throw std::runtime_error("Directory not found: " + folderPath);
+  }
+
+  for (auto &fileName : fileNames) {
+    std::string filePath = folderPath + fileName;
+    std::vector<char> buffer = FileHandler::generateSignature(filePath).second;
+    signatures.insert({fileName, buffer});
+  }
+
+  return signatures;
 }
 
 FileSignaturePair FileHandler::generateSignature(const std::string &fileName) {
@@ -188,17 +211,13 @@ FileDeltaPair FileHandler::threadComputeDelta(const std::vector<char> &signature
   return {fileName, std::move(deltaBuffer)};
 }
 
-FileDeltaPair FileHandler::generateDelta(const FileDeltaPair &authoritativeSignature, const FileSignaturePair &toPatchSignature) {
-  if (authoritativeSignature.first.compare(toPatchSignature.first) == 0) {
-    std::string filePath = sharedFolderPath + toPatchSignature.first;
-    return FileHandler::threadComputeDelta(toPatchSignature.second, filePath, toPatchSignature.first);
-  } else {
-    throw std::runtime_error("Failed to find client file name key in server map.");
-  }
+Delta FileHandler::generateDelta(const FileSignaturePair &toPatchSignaturePair) {
+    std::string filePath = sharedFolderPath + toPatchSignaturePair.first;
+    return FileHandler::threadComputeDelta(toPatchSignaturePair.second, filePath, toPatchSignaturePair.first).second;
 }
 
-SignatureMap FileHandler::generateDeltas(const SignatureMap &authoritativeSignature, const SignatureMap &toPatchSignature) {
-  SignatureMap deltas;
+DeltaMap FileHandler::generateDeltas(const SignatureMap &authoritativeSignature, const SignatureMap &toPatchSignature) {
+  DeltaMap deltas;
   ThreadPool pool(CPU_CORES);
 
   std::vector<std::future<FileDeltaPair>> fileToDeltaPairs;

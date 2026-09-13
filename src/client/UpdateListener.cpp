@@ -13,10 +13,8 @@ void UpdateListener::handleFileAction(efsw::WatchID watchid, const std::string &
   FileEvent event;
   switch (action) {
   case efsw::Actions::Add:
-    std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Added" << std::endl;
     break;
   case efsw::Actions::Delete:
-    std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Delete" << std::endl;
     break;
   case efsw::Actions::Modified: {
     // Debounce multiple modify events within a small time frame
@@ -35,9 +33,8 @@ void UpdateListener::handleFileAction(efsw::WatchID watchid, const std::string &
     break;
   }
   case efsw::Actions::Moved:
-    std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Moved from (" << oldFilename << ")" << std::endl;
     break;
   default:
-    std::cout << "Should never happen!" << std::endl;
+    throw std::runtime_error("Error in UpdateListener: This should never happen!");
   }
 }

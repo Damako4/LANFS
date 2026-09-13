@@ -9,59 +9,69 @@
 #include <msgpack.hpp>
 #include <openssl/err.h>
 #include <vector>
+#include <Logging.hpp>
 
 namespace filesystem = std::filesystem;
 
 void ServerApplication::handleSSLSession(SSL *ssl) {
+  ProtocolHandler protocolHandler(ssl);
   ProtocolHeader header;
+  std::string fileName;
   while (true) {
     // Read header bytes
-    ProtocolHandler::readHeaderBytes(ssl, header);
+    protocolHandler.readHeaderBytes(header);
 
     // Read stream bytes
     std::string buffer(header.streamLength, '\0');
-    ProtocolHandler::readStreamBytes(ssl, buffer, header.streamLength);
+    protocolHandler.readStreamBytes(buffer, header.streamLength);
     msgpack::object_handle result;
     msgpack::unpack(result, buffer.data(), header.streamLength);
     switch (header.command) {
     case Command::Signature: {
-      SignatureMap clientSignatures;
-      result.get().convert(clientSignatures);
+      FileSignaturePair clientSignature;
+      result.get().convert(clientSignature);
 
       // Generate file deltas and send over
-      SignatureMap deltas = FileHandler::generateDeltas(serverSignatures, clientSignatures);
+      Delta delta = FileHandler::generateDelta(clientSignature);
       msgpack::sbuffer sbuf;
-      msgpack::pack(sbuf, deltas);
-      ProtocolHandler::writeHeaderBytes(ssl, Command::Delta, 0, sbuf.size());
-      ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
+      msgpack::pack(sbuf, delta);
+      protocolHandler.writeHeaderBytes(Command::Delta, 0, sbuf.size());
+      protocolHandler.writeStreamBytes(sbuf.data(), sbuf.size());
       break;
     }
     case Command::Update: {
       // File name to update is stored in buffer
-      std::string fileName;
       result.get().convert(fileName);
-      
+
       // Get signature for that filename
       // TODO: Mutex for the server signatures when all clients write
-      auto [it, inserted] = serverSignatures.try_emplace(fileName);
-      if (inserted) {
-          // key didn't exist — generate the signature now and store it
-          it->second = FileHandler::generateSignature(fileName).second;
-      }
+      auto &record = signatures[fileName];
+      record.signature = FileHandler::generateSignature(fileName).second;
 
       // Send signature and then wait for a delta
       msgpack::sbuffer sbuf;
-      msgpack::pack(sbuf, it->first);
-      ProtocolHandler::writeHeaderBytes(ssl, Command::Signature, 0, sbuf.size());
-      ProtocolHandler::writeStreamBytes(ssl, sbuf.data(), sbuf.size());
+      msgpack::pack(sbuf, record.signature);
+      protocolHandler.writeHeaderBytes(Command::Signature, 0, sbuf.size());
+      protocolHandler.writeStreamBytes(sbuf.data(), sbuf.size());
       break;
     }
     case Command::Delta: {
       // Apply delta
-      FileDeltaPair fileDeltaPair;
-      result.get().convert(fileDeltaPair);
-      FileHandler::patchFile(fileDeltaPair);
-      std::cout << "Updating File!" << std::endl;
+      Delta delta;
+      result.get().convert(delta);
+      FileHandler::patchFile(std::make_pair(fileName, delta));
+
+      // Increment version and let client know
+      LOG_DEBUG("Updating " << fileName);
+      break;
+    }
+    case Command::NotImplemented: {
+      LOG_ERROR("Not implemented!");
+      msgpack::sbuffer sbuf;
+      std::string ping = "Ping!";
+      msgpack::pack(sbuf, ping);
+      protocolHandler.writeHeaderBytes(Command::NotImplemented, 0, sbuf.size());
+      protocolHandler.writeStreamBytes(sbuf.data(), sbuf.size());
       break;
     }
     default:
@@ -80,7 +90,7 @@ void ServerApplication::run() {
 
     // Pop off acceptor chain and reset its state
     std::unique_ptr<BIO, BioDeleter> client(BIO_pop(acceptor.get()));
-    std::cout << "New client connection" << std::endl;
+    LOG_INFO("New client connection");
 
     /* Associate new SSL handle */
     std::unique_ptr<SSL, SslDeleter> ssl(SSL_new(ctx.get()));
@@ -100,12 +110,12 @@ void ServerApplication::run() {
     try {
       handleSSLSession(ssl.get());
     } catch (const ConnectionClosed &) {
-      std::cout << "Client connection closed." << std::endl;
+      LOG_INFO("Client connection closed.");
       SSL_shutdown(ssl.get());
       continue;
     } catch (const std::exception &e) {
-      std::cout << "Client connection closed." << std::endl;
-      std::cerr << "Error: " << e.what() << std::endl;
+      LOG_INFO("Client connection closed.");
+      LOG_ERROR("Error: " << e.what());
       continue;
     }    
   }

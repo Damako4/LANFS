@@ -26,9 +26,9 @@ public:
  * @brief Enum defining the command being sent / recieved
  */
 enum class Command : uint8_t {
-    Signature = 0, ///<  Sending / recieving a signature
-    Delta = 1, ///< Sending / recieving a delta
-    Update = 2, ///< Sending / recieving file update
+    Signature = 0, ///<  Sending / recieving a @ref FileSignaturePair
+    Delta = 1, ///< Sending / recieving a @ref Delta
+    Update = 2, ///< Sending / recieving a ping for file update
     NotImplemented = 3 ///< Not implemented
 };
 
@@ -44,16 +44,51 @@ struct ProtocolHeader {
 class ProtocolHandler {
 public:
     /**
-     * @brief Read ProtocolHeader from @p ssl into @p outHeader
+     * @brief Initialize @ref ProtocolHandler to use @p ssl for all subsequent read / write calls
      * 
-     * @param ssl Pointer to the SSL connection to read from
-     * @param outHeader A reference to the ProtocolHeader
+     * @param ssl The SSL connection handle
      */
-    static void readHeaderBytes(SSL *ssl, ProtocolHeader &outHeader);
-    static void writeHeaderBytes(SSL* ssl, Command cmd, uint8_t flags, uint32_t streamLength);
-    static void writeStreamBytes(SSL* ssl, const char *bytes, size_t size);
-    static void readStreamBytes(SSL *ssl, std::string &buffer, size_t bytesToRead);
+    explicit ProtocolHandler(SSL *ssl) : ssl(ssl) {}
+
+    /**
+     * @brief Read a ProtocolHeader from @p ssl into @p outHeader.
+     *
+     * @param ssl Pointer to the SSL connection to read from.
+     * @param outHeader Reference to the ProtocolHeader to populate.
+     * @throws ConnectionClosed if the peer disconnects before any header bytes are read.
+     */
+    void readHeaderBytes(ProtocolHeader &outHeader);
+
+    /**
+     * @brief Write a ProtocolHeader to @p ssl.
+     *
+     * @param ssl Pointer to the SSL connection to write to.
+     * @param cmd The command type for this message.
+     * @param flags Command-specific flags.
+     * @param streamLength Number of bytes that will follow in the stream body.
+     */
+    void writeHeaderBytes(Command cmd, uint8_t flags, uint32_t streamLength);
+
+    /**
+     * @brief Write @p size bytes from @p bytes to @p ssl.
+     *
+     * @param ssl Pointer to the SSL connection to write to.
+     * @param bytes Pointer to the data to send.
+     * @param size Number of bytes to write.
+     */
+    void writeStreamBytes(const char *bytes, size_t size);
+
+    /**
+     * @brief Read @p bytesToRead bytes from @p ssl into @p buffer.
+     *
+     * @param ssl Pointer to the SSL connection to read from.
+     * @param buffer Destination buffer; must already be sized to hold @p bytesToRead bytes.
+     * @param bytesToRead Number of bytes to read.
+     * @throws ConnectionClosed if the peer disconnects before any bytes are read.
+     */
+    void readStreamBytes(std::string &buffer, size_t bytesToRead);
 private:
+    SSL *ssl; ///< Private SSL handle
     /**
      * @brief Read exactly @p bytesToRead bytesfrom the @p ssl connection into @p destination 
      * 
@@ -61,7 +96,7 @@ private:
      * @param destination Buffer to read into
      * @param bytesToRead The number of bytes to read
      */
-    static void readExact(SSL *ssl, void *destination, size_t bytesToRead);
+    void readExact(void *destination, size_t bytesToRead);
 
     /**
      * @brief Write exactly @p bytesToWrite bytes from buffer @p source into connection @p ssl
@@ -70,5 +105,5 @@ private:
      * @param destination Buffer to read from
      * @param bytesToRead The number of bytes to write 
      */
-    static void writeExact(SSL *ssl, const void *source, size_t bytesToWrite);
+    void writeExact(const void *source, size_t bytesToWrite);
 };
